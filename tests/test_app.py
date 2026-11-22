@@ -1,0 +1,79 @@
+"""Tests run against a throwaway in-memory SQLite database."""
+import os
+
+os.environ["DATABASE_URL"] = "sqlite://"
+
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import create_engine, func, select  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
+from sqlalchemy.pool import StaticPool  # noqa: E402
+
+from app import db  # noqa: E402
+from app.models import Checkout, CheckoutStatus, Order  # noqa: E402
+from app.simulator import SimConfig, run_simulation  # noqa: E402
+
+
+@pytest.fixture()
+def session():
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    db.Base.metadata.create_all(engine)
+    with Session(engine) as s:
+        yield s
+
+
+def test_simulation_is_reproducible(session):
+    a = run_simulation(session, SimConfig(seed=7, days=5))
+    b = run_simulation(session, SimConfig(seed=7, days=5))
+    assert (a.checkouts, a.abandoned, a.natural_returns) == (
+        b.checkouts, b.abandoned, b.natural_returns,
+    )
+
+
+def test_abandonment_rate_is_close_to_config(session):
+    s = run_simulation(session, SimConfig(seed=1, days=30, abandon_rate=0.4))
+    assert 0.33 < s.abandoned / s.checkouts < 0.47
+
+
+def test_every_completed_checkout_has_an_order(session):
+    s = run_simulation(session, SimConfig(seed=3, days=5))
+    completed = session.scalar(
+        select(func.count(Checkout.id)).where(
+            Checkout.store_id == s.store_id, Checkout.status == CheckoutStatus.completed
+        )
+    )
+    same_session = session.scalar(
+        select(func.count(Order.id)).where(
+            Order.store_id == s.store_id, Order.source == "same_session"
+        )
+    )
+    assert completed == same_session == s.completed
+
+
+def test_natural_returns_only_come_from_abandoned_checkouts(session):
+    s = run_simulation(session, SimConfig(seed=5, days=10))
+    bad = session.scalar(
+        select(func.count(Order.id))
+        .join(Checkout, Checkout.id == Order.checkout_id)
+        .where(Order.source == "returned", Checkout.status != CheckoutStatus.abandoned)
+    )
+    assert bad == 0
+    assert s.natural_returns > 0
+
+
+def test_dashboard_flow():
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    db.engine = engine
+    db.SessionLocal.configure(bind=engine)
+    from app.main import app
+
+    with TestClient(app) as client:
+        assert client.get("/health").json() == {"status": "ok"}
+        assert "No store data yet" in client.get("/").text
+        r = client.post("/simulate?days=3", follow_redirects=True)
+        assert r.status_code == 200 and "Abandoned" in r.text
+        assert client.get("/api/metrics").json()["checkouts"] > 0
