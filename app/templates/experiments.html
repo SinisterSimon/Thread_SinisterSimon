@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Experiments{% endblock %}
+{% block content %}
+{% if not store %}
+  <div class="empty"><p>Simulate a store first, then run agents against its abandoned checkouts.</p></div>
+{% else %}
+  <h2 style="margin-top:0">Run an agent</h2>
+  <form method="post" action="/experiments" class="card" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap">
+    <label><div class="label">Agent</div>
+      <select name="agent_key">
+        {% for key, a in agents.items() %}<option value="{{ key }}">{{ a[0] }}</option>{% endfor %}
+      </select></label>
+    <label><div class="label">Shoppers</div><input type="number" name="sample_size" value="50" min="1" max="500" style="width:90px"></label>
+    <button type="submit">Start</button>
+    <span class="note">{{ "Queued for the worker." if worker else "Runs right away in the app." }}</span>
+  </form>
+
+  <h2>Results</h2>
+  {% if not rows %}<p class="note">No experiments yet.</p>{% else %}
+  <table>
+    <tr><th>#</th><th>Agent</th><th>Status</th><th>Chats</th><th>Purchases</th>
+        <th>Claimed revenue</th><th>Would have bought anyway</th><th>Actually caused</th><th>Handoffs</th><th>Tokens</th></tr>
+    {% for e, s in rows %}
+    <tr>
+      <td><a href="/experiments/{{ e.id }}">{{ e.id }}</a></td>
+      <td>{{ agents[e.agent_key][0] if e.agent_key in agents else e.agent_key }}</td>
+      <td><span class="pill">{{ e.status.value }}</span></td>
+      <td>{{ s.conversations }}</td><td>{{ s.purchases }}</td>
+      <td>{{ s.claimed_revenue_cents|money }}</td>
+      <td>{{ s.anyway_revenue_cents|money }}</td>
+      <td><strong>{{ s.caused_revenue_cents|money }}</strong></td>
+      <td>{{ s.handoffs }}</td><td>{{ "{:,}".format(s.tokens) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="note">"Actually caused" uses the simulator's ground truth. Phase 4 estimates it the way a real store must: with a holdout group.</p>
+  {% endif %}
+{% endif %}
+{% endblock %}
