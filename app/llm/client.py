@@ -68,7 +68,18 @@ class OfflineLLM:
         )
 
 
+class LLMError(RuntimeError):
+    """The model gave no usable answer; the message says why."""
+
+
 class AnthropicLLM:
+    # Agents write one or two text-message sentences, so thinking adds nothing.
+    # Newer Claude models think by default, and thinking tokens count toward
+    # max_tokens: with a small limit the visible reply came back empty or cut
+    # off mid-sentence ("Orders ship within 1"). So: thinking off, roomier limit,
+    # and an error instead of a silently broken message.
+    MAX_TOKENS = 1024
+
     def __init__(self, api_key: str):
         import anthropic  # imported lazily so offline mode needs no SDK
 
@@ -78,11 +89,18 @@ class AnthropicLLM:
         system = system.split(OfflineLLM.MARKER, 1)[0]  # never send offline scripts
         resp = self._client.messages.create(
             model=model,
-            max_tokens=300,
+            max_tokens=self.MAX_TOKENS,
+            thinking={"type": "disabled"},
             system=system,
             messages=[{"role": m.role, "content": m.text} for m in messages],
         )
         text = "".join(block.text for block in resp.content if block.type == "text")
+        if resp.stop_reason == "max_tokens":
+            raise LLMError(f"{model} hit the {self.MAX_TOKENS}-token limit; the reply would be cut off")
+        if resp.stop_reason == "refusal":
+            raise LLMError(f"{model} declined to write this message (stop reason: refusal)")
+        if not text.strip():
+            raise LLMError(f"{model} returned no text (stop reason: {resp.stop_reason})")
         return LLMReply(
             text=text.strip(),
             model=model,

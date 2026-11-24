@@ -103,3 +103,60 @@ def test_baseline_beats_pushy_on_true_lift(session):
     assert results["baseline-haiku"].anyway_revenue_cents > 0
     assert results["baseline-haiku"].caused_revenue_cents > results["pushy-haiku"].caused_revenue_cents
     assert results["baseline-haiku"].handoffs > 0 == results["pushy-haiku"].handoffs
+
+
+class _FakeAnthropic:
+    """Stands in for the Anthropic SDK client, so no network or key is needed."""
+
+    def __init__(self, text: str, stop_reason: str = "end_turn"):
+        from types import SimpleNamespace as NS
+
+        self.calls = []
+        self._resp = NS(
+            content=[NS(type="thinking", thinking="..."), NS(type="text", text=text)] if text else [],
+            stop_reason=stop_reason,
+            usage=NS(input_tokens=10, output_tokens=5),
+        )
+        self.messages = NS(create=self._create)
+
+    def _create(self, **kwargs):
+        self.calls.append(kwargs)
+        return self._resp
+
+
+def _real_llm(fake):
+    import pytest
+
+    pytest.importorskip("anthropic")
+    from app.llm.client import AnthropicLLM
+
+    llm = AnthropicLLM(api_key="test")
+    llm._client = fake
+    return llm
+
+
+def test_real_model_runs_without_thinking_and_keeps_only_text():
+    from app.llm import Message
+
+    fake = _FakeAnthropic("Hi Winnie, your snowboard is still in your cart.")
+    reply = _real_llm(fake).complete(system="rules <<OFFLINE_REPLY>> script", messages=[Message("user", "go")],
+                                     model="claude-haiku-5-5")
+    assert reply.text == "Hi Winnie, your snowboard is still in your cart."
+    sent = fake.calls[0]
+    assert sent["thinking"] == {"type": "disabled"} and sent["max_tokens"] >= 1024
+    assert "OFFLINE_REPLY" not in sent["system"]
+
+
+def test_real_model_never_returns_an_empty_or_cut_off_message():
+    import pytest
+
+    from app.llm import Message
+    from app.llm.client import LLMError
+
+    for text, stop, why in [
+        ("Orders ship within 1", "max_tokens", "token limit"),
+        ("", "refusal", "declined"),
+        ("", "end_turn", "no text"),
+    ]:
+        with pytest.raises(LLMError, match=why):
+            _real_llm(_FakeAnthropic(text, stop)).complete(system="s", messages=[Message("user", "go")], model="m")

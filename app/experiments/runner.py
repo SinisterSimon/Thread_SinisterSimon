@@ -14,9 +14,11 @@ from sqlalchemy.orm import Session, selectinload
 from app import tracing
 from app.agents import AgentContext, get_agent
 from app.agents import guardrails as guard
+from app.agents.base import AgentTurn
 from app.evals import score_conversation
 from app.experiments.stats import LiftEstimate, estimate_lift
 from app.llm import LLM, Message
+from app.llm.client import LLMError
 from app.models import (
     Checkout,
     CheckoutItem,
@@ -138,9 +140,14 @@ def _draft(session: Session, exp: Experiment, checkout: Checkout, llm: LLM, stor
     """
     meta = {"experiment_id": exp.id, "agent": exp.agent_key, "checkout_id": checkout.id, "shadow": True}
     with tracing.conversation_trace(f"draft:{exp.agent_key}", meta):
-        turn = get_agent(exp.agent_key, llm).respond([], _context(store, checkout))
+        try:
+            turn = get_agent(exp.agent_key, llm).respond([], _context(store, checkout))
+        except LLMError as err:
+            # One bad reply shouldn't sink the other drafts; show why instead.
+            turn = AgentTurn(text=f"(No draft: {err}.)", handoff=False, end=False, discount_pct=0,
+                             input_tokens=0, output_tokens=0)
         fixes = 0
-        if exp.guardrails:
+        if exp.guardrails and not turn.text.startswith("(No draft"):
             turn, fixes = guard.apply(turn, last_shopper_text=None, discount_already_offered=False)
     session.add(
         Conversation(
