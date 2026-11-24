@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Conversation {{ c.id }}{% endblock %}
+{% block content %}
+<p class="label"><a href="/experiments/{{ c.experiment_id }}">Experiment #{{ c.experiment_id }}</a> / conversation {{ c.id }}</p>
+<h2 style="margin-top:0">{{ personas[c.persona_key].name if c.persona_key in personas else c.persona_key }}</h2>
+<p class="note">{{ personas[c.persona_key].description if c.persona_key in personas else "" }}</p>
+
+<div style="max-width:640px">
+  {% for m in c.messages %}
+    <div class="msg {{ m.sender }}"><div class="label">{{ "Agent" if m.sender == "agent" else "Shopper" }}</div>{{ m.text }}</div>
+  {% endfor %}
+</div>
+
+<h2>Outcome</h2>
+<div class="grid">
+  <div class="card"><div class="label">Bought</div><div class="value">{{ "Yes" if c.purchased else "No" }}</div>
+    {% if c.would_buy_anyway %}<div class="note">would have bought anyway</div>{% endif %}</div>
+  <div class="card"><div class="label">Revenue</div><div class="value">{{ c.revenue_cents|money }}</div></div>
+  <div class="card"><div class="label">Discount</div><div class="value">{{ c.discount_pct }}%</div></div>
+  <div class="card"><div class="label">Tokens</div><div class="value">{{ "{:,}".format(c.input_tokens + c.output_tokens) }}</div></div>
+</div>
+{% endblock %}

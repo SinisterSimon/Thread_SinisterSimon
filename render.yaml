@@ -9,5 +9,29 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false
+      - key: LLM_MODE
+        value: offline
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: WORKER_ENABLED
+        value: "0"
       - key: PYTHON_VERSION
         value: 3.12.7
+
+  # Background worker for experiments. Render workers are paid only (Starter,
+  # ~$7/month). Uncomment when you upgrade, then set WORKER_ENABLED=1 above.
+  # - type: worker
+  #   name: thread-worker
+  #   runtime: python
+  #   plan: starter
+  #   buildCommand: pip install -r requirements.txt
+  #   startCommand: python -m worker.run
+  #   envVars:
+  #     - key: DATABASE_URL
+  #       sync: false
+  #     - key: LLM_MODE
+  #       value: offline
+  #     - key: ANTHROPIC_API_KEY
+  #       sync: false
+  #     - key: PYTHON_VERSION
+  #       value: 3.12.7

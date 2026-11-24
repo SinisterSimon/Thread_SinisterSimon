@@ -1,0 +1,17 @@
+[project]
+name = "thread"
+version = "0.2.0"
+description = "A test lab for AI sales agents: simulated shoppers, scored conversations, measured lift."
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+# FastAPI dependencies use calls in defaults (B008); str+Enum kept for SQLAlchemy clarity.
+ignore = ["B008", "UP042"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

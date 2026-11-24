@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Experiment {{ e.id }}{% endblock %}
+{% block content %}
+<p class="label"><a href="/experiments">Experiments</a> / #{{ e.id }}</p>
+<h2 style="margin-top:0">{{ agents[e.agent_key][0] if e.agent_key in agents else e.agent_key }}
+  <span class="pill">{{ e.status.value }}</span></h2>
+{% if e.status.value in ("queued", "running") %}
+  <p class="note">Still running. <a href="/experiments/{{ e.id }}">Refresh</a> in a few seconds.</p>
+{% endif %}
+{% if e.error %}<div class="callout">Failed: {{ e.error }}</div>{% endif %}
+
+<div class="grid">
+  <div class="card"><div class="label">Conversations</div><div class="value">{{ s.conversations }}</div></div>
+  <div class="card"><div class="label">Purchases</div><div class="value">{{ s.purchases }}</div></div>
+  <div class="card"><div class="label">Claimed revenue</div><div class="value">{{ s.claimed_revenue_cents|money }}</div>
+    <div class="note">every purchase after a message</div></div>
+  <div class="card"><div class="label">Actually caused</div><div class="value">{{ s.caused_revenue_cents|money }}</div>
+    <div class="note">{{ s.anyway_revenue_cents|money }} would have come anyway</div></div>
+  <div class="card"><div class="label">Handoffs / discounts</div><div class="value">{{ s.handoffs }} / {{ s.discounted }}</div></div>
+</div>
+
+<h2>Conversations</h2>
+<table>
+  <tr><th>#</th><th>Shopper type</th><th>Bought</th><th>Would anyway</th><th>Discount</th><th>Handoff</th></tr>
+  {% for c in convs %}
+  <tr>
+    <td><a href="/conversations/{{ c.id }}">{{ c.id }}</a></td>
+    <td>{{ personas[c.persona_key].name if c.persona_key in personas else c.persona_key }}</td>
+    <td>{{ "yes" if c.purchased else "no" }}</td>
+    <td>{{ "yes" if c.would_buy_anyway else "" }}</td>
+    <td>{{ (c.discount_pct ~ "%") if c.discount_pct else "" }}</td>
+    <td>{{ "yes" if c.handed_off else "" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

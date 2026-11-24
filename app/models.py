@@ -126,3 +126,77 @@ class Order(Base):
     source: Mapped[str] = mapped_column(String(20))
 
     checkout: Mapped[Checkout | None] = relationship(back_populates="order")
+
+
+# --- Phase 2: agents, experiments and conversations -------------------------
+
+
+class ExperimentStatus(str, enum.Enum):
+    queued = "queued"
+    running = "running"
+    done = "done"
+    failed = "failed"
+
+
+class Experiment(Base):
+    """One run of one agent against a sample of abandoned checkouts."""
+
+    __tablename__ = "experiments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
+    agent_key: Mapped[str] = mapped_column(String(40))
+    sample_size: Mapped[int] = mapped_column(Integer)
+    status: Mapped[ExperimentStatus] = mapped_column(
+        Enum(ExperimentStatus), default=ExperimentStatus.queued, index=True
+    )
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    conversations: Mapped[list["Conversation"]] = relationship(
+        back_populates="experiment", cascade="all, delete-orphan"
+    )
+
+
+class Conversation(Base):
+    """An agent talking to one simulated shopper about one abandoned checkout.
+
+    Outcomes live here rather than in `orders`, so running several agents over
+    the same checkouts never double-counts store revenue.
+    """
+
+    __tablename__ = "conversations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    experiment_id: Mapped[int] = mapped_column(ForeignKey("experiments.id"), index=True)
+    checkout_id: Mapped[int] = mapped_column(ForeignKey("checkouts.id"), index=True)
+    persona_key: Mapped[str] = mapped_column(String(40))
+    purchased: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Ground truth: this shopper was coming back anyway, message or not.
+    would_buy_anyway: Mapped[bool] = mapped_column(Boolean, default=False)
+    handed_off: Mapped[bool] = mapped_column(Boolean, default=False)
+    discount_pct: Mapped[int] = mapped_column(Integer, default=0)
+    revenue_cents: Mapped[int] = mapped_column(Integer, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+
+    experiment: Mapped[Experiment] = relationship(back_populates="conversations")
+    messages: Mapped[list["ConversationMessage"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="ConversationMessage.seq",
+    )
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"), index=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    sender: Mapped[str] = mapped_column(String(10))  # "agent" or "shopper"
+    text: Mapped[str] = mapped_column(String(2000))
+
+    conversation: Mapped[Conversation] = relationship(back_populates="messages")
