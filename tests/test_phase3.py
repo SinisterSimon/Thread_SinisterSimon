@@ -141,3 +141,23 @@ def test_quality_and_guardrails_end_to_end():
     assert pushy_guarded.guardrail_fixes > 0
     assert pushy_guarded.policy_violations < pushy.policy_violations
     assert pushy_guarded.avg_quality > pushy.avg_quality
+
+
+def test_guardrails_never_leave_a_message_that_says_nothing():
+    """Shadow mode on a real store: the pushy opener was cut down to just the shopper's name."""
+    from app.agents import guardrails as guard
+    from app.agents.base import parse_turn
+
+    turn = parse_turn("Winnie! Your cart is about to expire - take 20% off if you buy in the next hour!", 0, 0)
+    fixed, fixes = guard.apply(turn, last_shopper_text=None, discount_already_offered=False)
+    assert fixed.text.startswith("Winnie! ") and "any questions before you check out" in fixed.text
+    assert fixed.discount_pct == 0 and fixes >= 1
+
+    # Later in a chat, the fallback is a general offer to help, not an opener.
+    turn = parse_turn("Hurry, last chance!", 0, 0)
+    fixed, _ = guard.apply(turn, last_shopper_text="hmm", discount_already_offered=False)
+    assert fixed.text.endswith(guard.FALLBACK_LINE)
+
+    # A good message is left exactly as it was.
+    ok = parse_turn("Hi Winnie, your cart is saved - any questions before you check out?", 0, 0)
+    assert guard.apply(ok, last_shopper_text=None, discount_already_offered=False) == (ok, 0)

@@ -7,6 +7,9 @@ They are deliberately few and easy to explain:
 2. No pressure: sentences with urgency tricks are removed.
 3. Forced handoff: if the shopper asks for a person or reports a billing problem
    and the agent did not hand off, the guardrail hands off.
+4. Still a message: if cutting left nothing worth sending (say, just "Winnie!"),
+   a safe line replaces it. Found in shadow mode on a real store, where the
+   pushy opener was cut down to the shopper's name alone.
 
 Each change counts as one "fix", so experiments show how often an agent needed
 correcting, not only how it performed after correction.
@@ -21,6 +24,8 @@ PRESSURE_WORDS = ("expire", "ends very soon", "hurry", "don't miss", "next hour"
 ESCALATION_WORDS = ("real person", "human", "charged", "twice", "refund", "complain")
 HANDOFF_LINE = "I'm passing this to a colleague from our team, who will follow up with you today."
 FALLBACK_LINE = "Happy to help if you have any questions about your order."
+OPENING_FALLBACK = "Your cart is saved, and we're happy to help if you have any questions before you check out."
+MIN_WORDS = 4  # a sentence shorter than this carries no message on its own ("Winnie!", "Hi there.")
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
@@ -52,7 +57,11 @@ def apply(turn: AgentTurn, *, last_shopper_text: str | None, discount_already_of
     calm = [s for s in sentences if not any(w in s.lower() for w in PRESSURE_WORDS)]
     if len(calm) != len(sentences):
         fixes += 1
-    sentences = calm or [FALLBACK_LINE]
+    sentences = calm
+
+    # 4. Still a message: keep a short greeting, add a safe line if nothing else is left.
+    if fixes and not any(len(s.split()) >= MIN_WORDS for s in sentences):
+        sentences = sentences + [OPENING_FALLBACK if last_shopper_text is None else FALLBACK_LINE]
 
     text = " ".join(sentences)
     handoff = turn.handoff
