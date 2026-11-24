@@ -140,21 +140,19 @@ def run_simulation(session: Session, config: SimConfig | None = None) -> SimSumm
                     for p, q in lines
                 ],
             )
+            # No flush per checkout: orders attach through the relationship and
+            # everything is inserted in batches by one flush at the end.
             session.add(checkout)
-            session.flush()
             counts["checkouts"] += 1
 
             if rng.random() >= cfg.abandon_rate:
-                session.add(
-                    Order(
-                        store_id=store.id,
-                        customer_id=customer.id,
-                        checkout_id=checkout.id,
-                        total_cents=total,
-                        cost_cents=cost,
-                        placed_at=started + timedelta(minutes=rng.randint(2, 15)),
-                        source="same_session",
-                    )
+                checkout.order = Order(
+                    store_id=store.id,
+                    customer_id=customer.id,
+                    total_cents=total,
+                    cost_cents=cost,
+                    placed_at=started + timedelta(minutes=rng.randint(2, 15)),
+                    source="same_session",
                 )
                 counts["completed"] += 1
                 continue
@@ -173,16 +171,13 @@ def run_simulation(session: Session, config: SimConfig | None = None) -> SimSumm
                 checkout.sim_natural_return_at = return_at
                 # Only record the order if it falls inside the simulated window.
                 if return_at <= end:
-                    session.add(
-                        Order(
-                            store_id=store.id,
-                            customer_id=customer.id,
-                            checkout_id=checkout.id,
-                            total_cents=total,
-                            cost_cents=cost,
-                            placed_at=return_at,
-                            source="returned",
-                        )
+                    checkout.order = Order(
+                        store_id=store.id,
+                        customer_id=customer.id,
+                        total_cents=total,
+                        cost_cents=cost,
+                        placed_at=return_at,
+                        source="returned",
                     )
                     counts["returns"] += 1
 

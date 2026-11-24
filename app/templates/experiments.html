@@ -1,8 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Experiments{% endblock %}
+{% block head %}{% if building or running %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
 {% block content %}
+{% include "_building.html" %}
 {% if not store %}
-  <div class="empty"><p>Simulate a store first, then run agents against its abandoned checkouts.</p></div>
+  {% if not building %}<div class="empty"><p>Simulate a store first, then run agents against its abandoned checkouts.</p></div>{% endif %}
 {% else %}
   <h2 style="margin-top:0">Run an agent</h2>
   <form method="post" action="/experiments" class="card" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap">
@@ -26,7 +28,7 @@
 
   <h2>Leaderboard</h2>
   {% if rows and rows|selectattr("0.status.value", "in", ["queued", "running"])|list %}
-  <p class="note">Some runs are still going. <a href="/experiments">Refresh</a> in a few seconds.</p>
+  <p class="note">Some runs are still going. This page refreshes itself.</p>
   {% endif %}
   {% if not rows %}<p class="note">No experiments yet.</p>{% else %}
   <table>

@@ -1,5 +1,7 @@
 """Web app: dashboard, experiments, transcripts and a small JSON API."""
+import logging
 import os
+import threading
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
@@ -57,6 +59,42 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title=APP_NAME, lifespan=lifespan)
 
 
+log = logging.getLogger("thread")
+
+# Simulations run after the response is sent, so a slow host never times the
+# request out. This counter lets the pages say "building" and refresh
+# themselves until the new store is in. One web process, so in-memory is enough.
+_building = 0
+_building_lock = threading.Lock()
+
+
+def is_building() -> bool:
+    return _building > 0
+
+
+def _mark_building(delta: int) -> None:
+    global _building
+    with _building_lock:
+        _building += delta
+
+
+def _simulate_in_background(config: SimConfig, holdout_pct: int | None = None) -> None:
+    """Build a store; with holdout_pct, then queue and run the three-agent comparison."""
+    experiment_ids: list[int] = []
+    try:
+        with SessionLocal() as session:
+            summary = run_simulation(session, config)
+            if holdout_pct is not None:
+                experiment_ids = _create_comparison(session, summary.store_id, holdout_pct)
+    except Exception:
+        log.exception("simulation failed")
+    finally:
+        _mark_building(-1)
+    if not WORKER_ENABLED:
+        for exp_id in experiment_ids:
+            _run_in_background(exp_id)
+
+
 def _run_in_background(experiment_id: int) -> None:
     with SessionLocal() as session:
         exp = session.get(Experiment, experiment_id)
@@ -84,20 +122,27 @@ def landing(request: Request):
 def dashboard(request: Request, session: Session = Depends(get_session)):
     store = latest_store(session)
     metrics = store_metrics(session, store) if store else None
-    return templates.TemplateResponse(request, "dashboard.html", {"m": metrics})
+    return templates.TemplateResponse(request, "dashboard.html", {"m": metrics, "building": is_building()})
 
 
 @app.post("/simulate")
-def simulate(days: int = Form(30), seed: int = Form(42), session: Session = Depends(get_session)):
-    run_simulation(session, SimConfig(seed=seed, days=max(1, min(days, 365))))
+def simulate(background: BackgroundTasks, days: int = Form(30), seed: int = Form(42)):
+    _mark_building(1)
+    background.add_task(_simulate_in_background, SimConfig(seed=seed, days=max(1, min(days, 365))))
     return RedirectResponse("/store", status_code=303)
 
 
+def _create_comparison(session: Session, store_id: int, holdout_pct: int) -> list[int]:
+    return [
+        create_experiment(session, store_id, agent_key, 5000, guardrails=guardrails, holdout_pct=holdout_pct).id
+        for agent_key, guardrails in COMPARISON
+    ]
+
+
 def _start_comparison(session: Session, background: BackgroundTasks, store_id: int, holdout_pct: int) -> None:
-    for agent_key, guardrails in COMPARISON:
-        exp = create_experiment(session, store_id, agent_key, 5000, guardrails=guardrails, holdout_pct=holdout_pct)
+    for exp_id in _create_comparison(session, store_id, holdout_pct):
         if not WORKER_ENABLED:
-            background.add_task(_run_in_background, exp.id)
+            background.add_task(_run_in_background, exp_id)
 
 
 @app.post("/experiments/run-all")
@@ -113,10 +158,10 @@ def run_all(
 
 
 @app.post("/demo")
-def demo(background: BackgroundTasks, session: Session = Depends(get_session)):
+def demo(background: BackgroundTasks):
     """One click: a fresh 180-day store, then the three-agent comparison with a 50% holdout."""
-    summary = run_simulation(session, SimConfig(days=DEMO_DAYS))
-    _start_comparison(session, background, summary.store_id, DEMO_HOLDOUT_PCT)
+    _mark_building(1)
+    background.add_task(_simulate_in_background, SimConfig(days=DEMO_DAYS), DEMO_HOLDOUT_PCT)
     return RedirectResponse("/experiments", status_code=303)
 
 
@@ -136,7 +181,14 @@ def experiments_page(request: Request, session: Session = Depends(get_session)):
     return templates.TemplateResponse(
         request,
         "experiments.html",
-        {"store": store, "rows": rows, "worker": WORKER_ENABLED, "reachable": reachable},
+        {
+            "store": store,
+            "rows": rows,
+            "worker": WORKER_ENABLED,
+            "reachable": reachable,
+            "building": is_building(),
+            "running": any(e.status.value in ("queued", "running") for e in exps),
+        },
     )
 
 
