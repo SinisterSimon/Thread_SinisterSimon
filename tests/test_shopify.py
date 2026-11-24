@@ -152,3 +152,25 @@ def test_page_explains_setup_when_not_configured(monkeypatch):
     monkeypatch.setattr(main, "client_from_env", lambda: None)
     with TestClient(main.app) as client:
         assert "No Shopify store connected" in client.get("/shopify").text
+
+
+def test_one_failed_model_reply_does_not_sink_the_other_drafts(session):
+    from app.experiments import create_experiment, run_experiment
+    from app.llm.client import LLMError, OfflineLLM
+    from app.models import Conversation
+
+    class Flaky(OfflineLLM):
+        calls = 0
+
+        def complete(self, **kw):
+            Flaky.calls += 1
+            if Flaky.calls == 1:
+                raise LLMError("claude-haiku-5-5 returned no text (stop reason: end_turn)")
+            return super().complete(**kw)
+
+    store_id = sync_store(session, fake_shopify()[0]).store_id
+    exp = create_experiment(session, store_id, "baseline-haiku", 50, shadow=True)
+    run_experiment(session, exp, Flaky())
+    assert exp.status.value == "done"
+    texts = [c.messages[0].text for c in session.scalars(select(Conversation)).all()]
+    assert len(texts) == 3 and sum(t.startswith("(No draft: ") for t in texts) == 1
