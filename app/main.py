@@ -5,7 +5,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -22,7 +22,25 @@ from app.simulator import SimConfig, run_simulation
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.filters["money"] = lambda cents: f"{'−' if cents < 0 else ''}${abs(cents) / 100:,.0f}"
-templates.env.globals.update(app_name=APP_NAME, agents=AGENTS, personas={p.key: p for p in PERSONAS})
+templates.env.globals.update(
+    app_name=APP_NAME,
+    agents=AGENTS,
+    personas={p.key: p for p in PERSONAS},
+    repo_url=os.getenv("REPO_URL", "https://github.com/SinisterSimon/Thread_SinisterSimon"),
+)
+
+# The agents compared by "Run all agents" and the demo: the good one, the bad one,
+# and the bad one behind guardrails.
+COMPARISON = (("baseline-haiku", False), ("pushy-haiku", False), ("pushy-haiku", True))
+DEMO_DAYS = 180
+DEMO_HOLDOUT_PCT = 50
+
+FAVICON = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+    '<rect width="64" height="64" rx="14" fill="#3c3489"/>'
+    '<path d="M14 40c8-14 14 6 22-8s10-8 14-8" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round"/>'
+    "</svg>"
+)
 
 # With a separate worker service running (Render), experiments wait in the
 # queue for it. Without one (local dev, free tier), the web app runs them
@@ -51,7 +69,18 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/favicon.svg")
+@app.get("/favicon.ico")
+def favicon() -> Response:
+    return Response(FAVICON, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+
+
 @app.get("/", response_class=HTMLResponse)
+def landing(request: Request):
+    return templates.TemplateResponse(request, "landing.html", {})
+
+
+@app.get("/store", response_class=HTMLResponse)
 def dashboard(request: Request, session: Session = Depends(get_session)):
     store = latest_store(session)
     metrics = store_metrics(session, store) if store else None
@@ -61,7 +90,34 @@ def dashboard(request: Request, session: Session = Depends(get_session)):
 @app.post("/simulate")
 def simulate(days: int = Form(30), seed: int = Form(42), session: Session = Depends(get_session)):
     run_simulation(session, SimConfig(seed=seed, days=max(1, min(days, 365))))
-    return RedirectResponse("/", status_code=303)
+    return RedirectResponse("/store", status_code=303)
+
+
+def _start_comparison(session: Session, background: BackgroundTasks, store_id: int, holdout_pct: int) -> None:
+    for agent_key, guardrails in COMPARISON:
+        exp = create_experiment(session, store_id, agent_key, 5000, guardrails=guardrails, holdout_pct=holdout_pct)
+        if not WORKER_ENABLED:
+            background.add_task(_run_in_background, exp.id)
+
+
+@app.post("/experiments/run-all")
+def run_all(
+    background: BackgroundTasks, holdout_pct: int = Form(DEMO_HOLDOUT_PCT), session: Session = Depends(get_session)
+):
+    """Baseline, pushy, and pushy with guardrails on every textable checkout of the latest store."""
+    store = latest_store(session)
+    if store is None:
+        raise HTTPException(400, "simulate a store first")
+    _start_comparison(session, background, store.id, holdout_pct)
+    return RedirectResponse("/experiments", status_code=303)
+
+
+@app.post("/demo")
+def demo(background: BackgroundTasks, session: Session = Depends(get_session)):
+    """One click: a fresh 180-day store, then the three-agent comparison with a 50% holdout."""
+    summary = run_simulation(session, SimConfig(days=DEMO_DAYS))
+    _start_comparison(session, background, summary.store_id, DEMO_HOLDOUT_PCT)
+    return RedirectResponse("/experiments", status_code=303)
 
 
 @app.get("/experiments", response_class=HTMLResponse)

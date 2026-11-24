@@ -18,7 +18,16 @@
       The holdout share gets no message; it's how a real store measures lift.</span>
   </form>
 
+  <form method="post" action="/experiments/run-all" style="margin-top:12px;display:flex;gap:10px;align-items:center">
+    <input type="hidden" name="holdout_pct" value="50">
+    <button type="submit" class="btn-secondary">Run all three agents</button>
+    <span class="note">Baseline, pushy, and pushy with guardrails, on every textable checkout with a 50% holdout.</span>
+  </form>
+
   <h2>Leaderboard</h2>
+  {% if rows and rows|selectattr("0.status.value", "in", ["queued", "running"])|list %}
+  <p class="note">Some runs are still going. <a href="/experiments">Refresh</a> in a few seconds.</p>
+  {% endif %}
   {% if not rows %}<p class="note">No experiments yet.</p>{% else %}
   <table>
     <tr><th>#</th><th>Agent</th><th>Shoppers<br><span class="note">messaged / holdout</span></th>
