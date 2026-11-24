@@ -3,7 +3,7 @@
 {% block content %}
 <p class="label"><a href="/experiments">Experiments</a> / #{{ e.id }}</p>
 <h2 style="margin-top:0">{{ agents[e.agent_key][0] if e.agent_key in agents else e.agent_key }}
-  <span class="pill">{{ e.status.value }}</span></h2>
+  <span class="pill">{{ e.status.value }}</span>{% if e.guardrails %} <span class="pill">guardrails on</span>{% endif %}</h2>
 {% if e.status.value in ("queued", "running") %}
   <p class="note">Still running. <a href="/experiments/{{ e.id }}">Refresh</a> in a few seconds.</p>
 {% endif %}
@@ -17,11 +17,15 @@
   <div class="card"><div class="label">Actually caused</div><div class="value">{{ s.caused_revenue_cents|money }}</div>
     <div class="note">{{ s.anyway_revenue_cents|money }} would have come anyway</div></div>
   <div class="card"><div class="label">Handoffs / discounts</div><div class="value">{{ s.handoffs }} / {{ s.discounted }}</div></div>
+  <div class="card"><div class="label">Quality</div><div class="value">{{ s.avg_quality if s.avg_quality is not none else "–" }}</div>
+    <div class="note">out of 100: rules + AI judge</div></div>
+  <div class="card"><div class="label">Policy breaks</div><div class="value">{{ s.policy_violations }}</div>
+    <div class="note">{% if e.guardrails %}{{ s.guardrail_fixes }} messages fixed by guardrails{% else %}guardrails off{% endif %}</div></div>
 </div>
 
 <h2>Conversations</h2>
 <table>
-  <tr><th>#</th><th>Shopper type</th><th>Bought</th><th>Would anyway</th><th>Discount</th><th>Handoff</th></tr>
+  <tr><th>#</th><th>Shopper type</th><th>Bought</th><th>Would anyway</th><th>Discount</th><th>Handoff</th><th>Quality</th></tr>
   {% for c in convs %}
   <tr>
     <td><a href="/conversations/{{ c.id }}">{{ c.id }}</a></td>
@@ -30,6 +34,7 @@
     <td>{{ "yes" if c.would_buy_anyway else "" }}</td>
     <td>{{ (c.discount_pct ~ "%") if c.discount_pct else "" }}</td>
     <td>{{ "yes" if c.handed_off else "" }}</td>
+    <td>{{ c.score.quality if c.score else "–" }}</td>
   </tr>
   {% endfor %}
 </table>

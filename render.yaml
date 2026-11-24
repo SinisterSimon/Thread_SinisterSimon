@@ -16,6 +16,14 @@ services:
         sync: false
       - key: WORKER_ENABLED
         value: "0"
+      - key: JUDGE_MODEL
+        value: claude-sonnet-5-5
+      - key: LANGFUSE_PUBLIC_KEY
+        sync: false
+      - key: LANGFUSE_SECRET_KEY
+        sync: false
+      - key: LANGFUSE_HOST
+        value: https://cloud.langfuse.com
       - key: PYTHON_VERSION
         value: 3.12.7
 

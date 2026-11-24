@@ -8,7 +8,7 @@ model is worth it.
 from dataclasses import dataclass
 
 from app.agents.base import END_TAG, HANDOFF_TAG, AgentContext, AgentTurn, parse_turn
-from app.llm import LLM, Message
+from app.llm import LLM, Message, traced
 from app.llm.client import OfflineLLM
 
 BASELINE_RULES = f"""You text shoppers who left items in their checkout, on behalf of the store.
@@ -75,7 +75,7 @@ class PromptAgent:
     def respond(self, history: list[Message], ctx: AgentContext) -> AgentTurn:
         offline = self.script(history, ctx)
         system = f"{self.rules}\n\n{_context_block(ctx)}\n{OfflineLLM.MARKER} {offline}"
-        out = self.llm.complete(system=system, messages=_opening_nudge(history), model=self.model)
+        out = traced(f"agent:{self.key}", self.llm, system=system, messages=_opening_nudge(history), model=self.model)
         return parse_turn(out.text, out.input_tokens, out.output_tokens)
 
 

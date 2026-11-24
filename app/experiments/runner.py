@@ -11,7 +11,10 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app import tracing
 from app.agents import AgentContext, get_agent
+from app.agents import guardrails as guard
+from app.evals import score_conversation
 from app.llm import LLM, Message
 from app.models import (
     Checkout,
@@ -19,6 +22,7 @@ from app.models import (
     CheckoutStatus,
     Conversation,
     ConversationMessage,
+    ConversationScore,
     Customer,
     Experiment,
     ExperimentStatus,
@@ -40,11 +44,14 @@ def _money(cents: int) -> str:
     return f"${cents / 100:,.2f}"
 
 
-def create_experiment(session: Session, store_id: int, agent_key: str, sample_size: int) -> Experiment:
+def create_experiment(
+    session: Session, store_id: int, agent_key: str, sample_size: int, guardrails: bool = False
+) -> Experiment:
     exp = Experiment(
         store_id=store_id,
         agent_key=agent_key,
         sample_size=sample_size,
+        guardrails=guardrails,
         status=ExperimentStatus.queued,
         created_at=datetime.now(),
     )
@@ -78,6 +85,12 @@ def _sample(session: Session, exp: Experiment) -> list[Checkout]:
 
 
 def _converse(session: Session, exp: Experiment, checkout: Checkout, llm: LLM, store: Store) -> None:
+    meta = {"experiment_id": exp.id, "agent": exp.agent_key, "checkout_id": checkout.id, "guardrails": exp.guardrails}
+    with tracing.conversation_trace(f"conversation:{exp.agent_key}", meta):
+        _converse_inner(session, exp, checkout, llm, store)
+
+
+def _converse_inner(session: Session, exp: Experiment, checkout: Checkout, llm: LLM, store: Store) -> None:
     agent = get_agent(exp.agent_key, llm)
     persona = persona_for(checkout.id)
     ctx = AgentContext(
@@ -92,10 +105,14 @@ def _converse(session: Session, exp: Experiment, checkout: Checkout, llm: LLM, s
     history: list[Message] = []
     transcript: list[tuple[str, str]] = []
     agent_text, handed_off, discount = [], False, 0
-    tokens_in = tokens_out = 0
+    tokens_in = tokens_out = fixes = 0
 
     for _ in range(MAX_ROUNDS):
         turn = agent.respond(history, ctx)
+        if exp.guardrails:
+            last_shopper = history[-1].text if history and history[-1].role == "user" else None
+            turn, n = guard.apply(turn, last_shopper_text=last_shopper, discount_already_offered=discount > 0)
+            fixes += n
         history.append(Message(role="assistant", text=turn.text))
         transcript.append(("agent", turn.text))
         agent_text.append(turn.text)
@@ -125,6 +142,11 @@ def _converse(session: Session, exp: Experiment, checkout: Checkout, llm: LLM, s
         rng=random.Random(f"outcome:{checkout.id}"),
     )
     revenue = round(checkout.total_cents * (100 - discount) / 100) if outcome.purchased else 0
+    score, j_in, j_out = score_conversation(
+        llm=llm, persona=persona, transcript=transcript, handed_off=handed_off, discount_pct=discount
+    )
+    tracing.score_trace("quality", score.quality, score.judge_notes)
+    tracing.score_trace("caused_sale", float(outcome.purchased and not outcome.would_buy_anyway))
     session.add(
         Conversation(
             experiment_id=exp.id,
@@ -135,8 +157,22 @@ def _converse(session: Session, exp: Experiment, checkout: Checkout, llm: LLM, s
             handed_off=handed_off,
             discount_pct=discount,
             revenue_cents=revenue,
-            input_tokens=tokens_in,
-            output_tokens=tokens_out,
+            input_tokens=tokens_in + j_in,
+            output_tokens=tokens_out + j_out,
+            guardrail_fixes=fixes,
+            score=ConversationScore(
+                addressed_objection=score.addressed_objection,
+                correct_handoff=score.correct_handoff,
+                discount_within_policy=score.discount_within_policy,
+                no_pressure=score.no_pressure,
+                respected_browser=score.respected_browser,
+                judge_model=score.judge_model,
+                helpfulness=score.helpfulness,
+                accuracy=score.accuracy,
+                tone=score.tone,
+                judge_notes=score.judge_notes,
+                quality=score.quality,
+            ),
             messages=[
                 ConversationMessage(seq=i, sender=sender, text=text)
                 for i, (sender, text) in enumerate(transcript)
@@ -154,6 +190,7 @@ def run_experiment(session: Session, exp: Experiment, llm: LLM) -> Experiment:
         for checkout in _sample(session, exp):
             _converse(session, exp, checkout, llm, store)
         exp.status = ExperimentStatus.done
+        tracing.flush()
     except Exception as err:  # keep the failure visible on the page
         session.rollback()
         exp.status = ExperimentStatus.failed
@@ -173,10 +210,20 @@ class ExperimentSummary:
     handoffs: int
     discounted: int
     tokens: int
+    avg_quality: float | None        # 0-100, rules + AI judge
+    policy_violations: int           # chats that failed a rule check
+    guardrail_fixes: int             # agent messages the guardrails changed
 
 
 def summarize(session: Session, exp: Experiment) -> ExperimentSummary:
-    convs = list(session.scalars(select(Conversation).where(Conversation.experiment_id == exp.id)))
+    convs = list(
+        session.scalars(
+            select(Conversation)
+            .where(Conversation.experiment_id == exp.id)
+            .options(selectinload(Conversation.score))
+        )
+    )
+    scores = [c.score for c in convs if c.score is not None]
     claimed = sum(x.revenue_cents for x in convs)
     anyway = sum(x.revenue_cents for x in convs if x.would_buy_anyway)
     return ExperimentSummary(
@@ -188,4 +235,9 @@ def summarize(session: Session, exp: Experiment) -> ExperimentSummary:
         handoffs=sum(1 for x in convs if x.handed_off),
         discounted=sum(1 for x in convs if x.discount_pct > 0),
         tokens=sum(x.input_tokens + x.output_tokens for x in convs),
+        avg_quality=round(sum(s.quality for s in scores) / len(scores), 1) if scores else None,
+        policy_violations=sum(
+            1 for s in scores if not (s.correct_handoff and s.discount_within_policy and s.no_pressure)
+        ),
+        guardrail_fixes=sum(x.guardrail_fixes for x in convs),
     )

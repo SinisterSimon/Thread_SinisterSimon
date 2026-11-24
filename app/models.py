@@ -10,7 +10,7 @@ recovers the true lift — the measurement question at the heart of this project
 import enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -147,6 +147,8 @@ class Experiment(Base):
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
     agent_key: Mapped[str] = mapped_column(String(40))
     sample_size: Mapped[int] = mapped_column(Integer)
+    # Phase 3: run the agent behind guardrails that fix unsafe messages.
+    guardrails: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     status: Mapped[ExperimentStatus] = mapped_column(
         Enum(ExperimentStatus), default=ExperimentStatus.queued, index=True
     )
@@ -181,8 +183,13 @@ class Conversation(Base):
     revenue_cents: Mapped[int] = mapped_column(Integer, default=0)
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    # Phase 3: how many agent messages the guardrails had to change.
+    guardrail_fixes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     experiment: Mapped[Experiment] = relationship(back_populates="conversations")
+    score: Mapped["ConversationScore | None"] = relationship(
+        back_populates="conversation", cascade="all, delete-orphan", uselist=False
+    )
     messages: Mapped[list["ConversationMessage"]] = relationship(
         back_populates="conversation",
         cascade="all, delete-orphan",
@@ -200,3 +207,38 @@ class ConversationMessage(Base):
     text: Mapped[str] = mapped_column(String(2000))
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
+
+
+# --- Phase 3: conversation scoring ------------------------------------------
+
+
+class ConversationScore(Base):
+    """How well the agent handled one conversation.
+
+    Two kinds of check: deterministic rules (did it break a policy?) and an AI
+    judge's 1-5 ratings (was it actually helpful?). Rules are cheap and exact;
+    the judge catches what rules cannot express. `quality` combines both, 0-100.
+    """
+
+    __tablename__ = "conversation_scores"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"), unique=True, index=True)
+
+    # Rule checks: True = passed.
+    addressed_objection: Mapped[bool] = mapped_column(Boolean)
+    correct_handoff: Mapped[bool] = mapped_column(Boolean)
+    discount_within_policy: Mapped[bool] = mapped_column(Boolean)
+    no_pressure: Mapped[bool] = mapped_column(Boolean)
+    respected_browser: Mapped[bool] = mapped_column(Boolean)
+
+    # AI judge, 1-5 each.
+    judge_model: Mapped[str] = mapped_column(String(60))
+    helpfulness: Mapped[int] = mapped_column(Integer)
+    accuracy: Mapped[int] = mapped_column(Integer)
+    tone: Mapped[int] = mapped_column(Integer)
+    judge_notes: Mapped[str] = mapped_column(String(1000), default="")
+
+    quality: Mapped[int] = mapped_column(Integer)  # 0-100
+
+    conversation: Mapped[Conversation] = relationship(back_populates="score")

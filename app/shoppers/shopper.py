@@ -1,5 +1,5 @@
 """The simulated shopper on the other end of the conversation."""
-from app.llm import LLM, Message
+from app.llm import LLM, Message, traced
 from app.llm.client import OfflineLLM
 from app.shoppers.personas import Persona
 
@@ -32,5 +32,5 @@ class ShopperBot:
             Message(role="user" if m.role == "assistant" else "assistant", text=m.text)
             for m in history
         ]
-        out = self.llm.complete(system=system, messages=flipped, model=SHOPPER_MODEL)
+        out = traced(f"shopper:{self.persona.key}", self.llm, system=system, messages=flipped, model=SHOPPER_MODEL)
         return out.text, out.input_tokens, out.output_tokens
