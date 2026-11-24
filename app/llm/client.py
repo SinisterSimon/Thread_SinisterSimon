@@ -109,11 +109,24 @@ class AnthropicLLM:
         )
 
 
-def get_llm() -> LLM:
-    mode = os.getenv("LLM_MODE", "offline")
+def mode_for(shadow: bool = False) -> str:
+    """Which model mode a run uses.
+
+    LLM_MODE drives the simulated lab, where one click can mean thousands of
+    calls. DRAFT_LLM_MODE drives shadow drafts on the Live store: one short
+    message per real checkout. Keeping them apart lets the public site write
+    real drafts while the lab stays offline and free. DRAFT_LLM_MODE falls back
+    to LLM_MODE, so a single setting still works locally.
+    """
+    lab = os.getenv("LLM_MODE", "offline")
+    return os.getenv("DRAFT_LLM_MODE", lab) if shadow else lab
+
+
+def get_llm(shadow: bool = False) -> LLM:
+    mode = mode_for(shadow)
     if mode == "anthropic":
         key = os.getenv("ANTHROPIC_API_KEY")
         if not key:
-            raise RuntimeError("LLM_MODE=anthropic but ANTHROPIC_API_KEY is not set")
+            raise RuntimeError("anthropic mode needs ANTHROPIC_API_KEY")
         return AnthropicLLM(key)
     return OfflineLLM()

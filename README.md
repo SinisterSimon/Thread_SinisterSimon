@@ -91,6 +91,7 @@ Optional per experiment (`app/agents/guardrails.py`). They run outside the model
 - **Migrations that adopt an existing database.** The live database predates Alembic, so startup detects that and stamps the baseline before upgrading. Tests check that migrations match the models exactly.
 - **Money in integer cents.** No floating-point rounding in revenue.
 - **Real data in shadow mode first** (`app/shopify/`). Thread reads a Shopify development store's abandoned checkouts with read-only scopes, and agents draft the message they *would* send. Nothing is sent, real customers are never marked as consenting to texts, and contact details are masked on the page. Real and simulated stores never mix, because the lab's lift numbers need ground truth only a simulator has.
+- **Two model switches.** `LLM_MODE` drives the lab (one click can mean thousands of calls); `DRAFT_LLM_MODE` drives Live store drafts (one message per real checkout). The public site writes real Claude drafts, capped per day, while the lab stays offline and free.
 
 ## Stack
 

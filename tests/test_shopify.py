@@ -174,3 +174,34 @@ def test_one_failed_model_reply_does_not_sink_the_other_drafts(session):
     assert exp.status.value == "done"
     texts = [c.messages[0].text for c in session.scalars(select(Conversation)).all()]
     assert len(texts) == 3 and sum(t.startswith("(No draft: ") for t in texts) == 1
+
+
+def test_drafts_can_use_real_claude_while_the_lab_stays_offline(monkeypatch):
+    from app.llm import mode_for
+
+    monkeypatch.setenv("LLM_MODE", "offline")
+    monkeypatch.delenv("DRAFT_LLM_MODE", raising=False)
+    assert (mode_for(), mode_for(shadow=True)) == ("offline", "offline")  # one setting still drives both
+    monkeypatch.setenv("DRAFT_LLM_MODE", "anthropic")
+    assert (mode_for(), mode_for(shadow=True)) == ("offline", "anthropic")
+
+
+def test_real_model_drafts_are_capped_per_day(monkeypatch):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    db.engine = engine
+    db.SessionLocal.configure(bind=engine)
+    import app.main as main
+    from app.llm.client import OfflineLLM
+
+    asked = []
+    monkeypatch.setenv("DRAFT_LLM_MODE", "anthropic")
+    monkeypatch.setattr(main, "DRAFT_RUNS_PER_DAY", 1)
+    monkeypatch.setattr(main, "client_from_env", lambda: fake_shopify()[0])
+    monkeypatch.setattr(main, "get_llm", lambda shadow=False: asked.append(shadow) or OfflineLLM())
+    with TestClient(main.app) as client:
+        client.post("/shopify/sync")
+        assert "1 run left today" in client.get("/shopify").text
+        client.post("/shopify/draft", data={"agent_key": "baseline-haiku"})
+        assert asked == [True]  # the draft run asked for the draft model, not the lab's
+        page = client.post("/shopify/draft", data={"agent_key": "baseline-haiku"}, follow_redirects=True).text
+        assert "Daily limit" in page and asked == [True]  # the second run never started

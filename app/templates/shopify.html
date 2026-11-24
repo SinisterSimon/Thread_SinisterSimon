@@ -49,7 +49,9 @@
         <select name="agent_key">{% for key, a in agents.items() %}<option value="{{ key }}">{{ a[0] }}</option>{% endfor %}</select></label>
       <label style="display:flex;gap:6px;align-items:center;padding-bottom:8px"><input type="checkbox" name="guardrails" value="true"> Guardrails on</label>
       <button type="submit">Draft for every checkout</button>
-      <span class="note">Writes one opening message per shopper. Nothing leaves Thread.</span>
+      <span class="note">Writes one opening message per shopper. Nothing leaves Thread.<br>
+        {% if draft_mode == "offline" %}Offline mode: drafts are fixed sample lines.
+        {% else %}Written by real Claude models · {{ runs_left }} run{{ "" if runs_left == 1 else "s" }} left today.{% endif %}</span>
     </form>
     {% endif %}
 
