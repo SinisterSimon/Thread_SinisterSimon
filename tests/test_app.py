@@ -103,3 +103,39 @@ def test_demo_and_run_all(monkeypatch):
 
         client.post("/experiments/run-all", data={"holdout_pct": 20})
         assert client.get("/api/experiments/6").json()["holdout_pct"] == 20
+
+
+def test_simulation_runs_after_the_response_and_clears_the_building_flag(monkeypatch):
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    db.engine = engine
+    db.SessionLocal.configure(bind=engine)
+    import app.main as main
+
+    with TestClient(main.app) as client:
+        # The request itself only schedules the work, so it returns at once.
+        r = client.post("/simulate", data={"days": 3}, follow_redirects=False)
+        assert r.status_code == 303
+        assert not main.is_building()
+        assert client.get("/api/metrics").json()["checkouts"] > 0
+
+        def broken(*_args, **_kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(main, "run_simulation", broken)
+        client.post("/simulate", data={"days": 3})
+        assert not main.is_building()  # a failed run must not leave pages refreshing forever
+        assert "Building a new store" not in client.get("/store").text
+
+
+def test_building_banner_shows_while_a_store_is_simulating():
+    import app.main as main
+
+    main._mark_building(1)
+    try:
+        with TestClient(main.app) as client:
+            page = client.get("/store").text
+            assert "Building a new store" in page and 'http-equiv="refresh"' in page
+    finally:
+        main._mark_building(-1)
