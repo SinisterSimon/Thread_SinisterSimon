@@ -149,6 +149,8 @@ class Experiment(Base):
     sample_size: Mapped[int] = mapped_column(Integer)
     # Phase 3: run the agent behind guardrails that fix unsafe messages.
     guardrails: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # Phase 4: share of sampled checkouts randomly kept message-free (0-90).
+    holdout_pct: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     status: Mapped[ExperimentStatus] = mapped_column(
         Enum(ExperimentStatus), default=ExperimentStatus.queued, index=True
     )
@@ -175,12 +177,17 @@ class Conversation(Base):
     experiment_id: Mapped[int] = mapped_column(ForeignKey("experiments.id"), index=True)
     checkout_id: Mapped[int] = mapped_column(ForeignKey("checkouts.id"), index=True)
     persona_key: Mapped[str] = mapped_column(String(40))
+    # Phase 4: "treatment" (messaged) or "holdout" (randomly left alone; no messages).
+    arm: Mapped[str] = mapped_column(String(10), default="treatment", server_default="treatment", index=True)
     purchased: Mapped[bool] = mapped_column(Boolean, default=False)
     # Ground truth: this shopper was coming back anyway, message or not.
     would_buy_anyway: Mapped[bool] = mapped_column(Boolean, default=False)
     handed_off: Mapped[bool] = mapped_column(Boolean, default=False)
     discount_pct: Mapped[int] = mapped_column(Integer, default=0)
     revenue_cents: Mapped[int] = mapped_column(Integer, default=0)
+    # Ground truth: what this shopper would have paid with no message at all
+    # (full cart price if they were coming back anyway, else 0).
+    baseline_revenue_cents: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     # Phase 3: how many agent messages the guardrails had to change.

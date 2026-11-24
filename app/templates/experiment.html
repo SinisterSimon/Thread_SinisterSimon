@@ -1,21 +1,41 @@
 {% extends "base.html" %}
+{% from "_lift_chart.html" import lift_chart %}
 {% block title %}Experiment {{ e.id }}{% endblock %}
 {% block content %}
 <p class="label"><a href="/experiments">Experiments</a> / #{{ e.id }}</p>
 <h2 style="margin-top:0">{{ agents[e.agent_key][0] if e.agent_key in agents else e.agent_key }}
-  <span class="pill">{{ e.status.value }}</span>{% if e.guardrails %} <span class="pill">guardrails on</span>{% endif %}</h2>
+  <span class="pill">{{ e.status.value }}</span>{% if e.guardrails %} <span class="pill">guardrails on</span>{% endif %}
+  {% if e.holdout_pct %} <span class="pill">{{ e.holdout_pct }}% holdout</span>{% endif %}</h2>
 {% if e.status.value in ("queued", "running") %}
   <p class="note">Still running. <a href="/experiments/{{ e.id }}">Refresh</a> in a few seconds.</p>
 {% endif %}
 {% if e.error %}<div class="callout">Failed: {{ e.error }}</div>{% endif %}
 
-<div class="grid">
+{% if e.status.value == "done" %}
+<h2>Did the messages work?</h2>
+<div class="card">
+  {{ lift_chart(s) }}
+  {% set est = s.estimate %}
+  {% if est %}
+  <p class="note" style="margin-bottom:0">
+    {{ s.conversations }} shoppers messaged, {{ s.holdout_size }} randomly left alone.
+    Bought: {{ "%.1f"|format(est.conversion_treatment * 100) }}% vs {{ "%.1f"|format(est.conversion_holdout * 100) }}%.
+    {% if est.significant and est.total_lift > 0 %}The holdout comparison shows a real positive effect.
+    {% elif est.significant %}The holdout comparison shows messaging <strong>lost</strong> revenue.
+    {% else %}The range includes $0: with this many shoppers a real store <strong>could not tell</strong> whether messaging helped.{% endif %}
+    {% if s.claimed_vs_true %}The claimed number is <strong>{{ "%.1f"|format(s.claimed_vs_true) }}×</strong> the true effect.{% endif %}
+  </p>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="grid" style="margin-top:16px">
   <div class="card"><div class="label">Conversations</div><div class="value">{{ s.conversations }}</div></div>
   <div class="card"><div class="label">Purchases</div><div class="value">{{ s.purchases }}</div></div>
   <div class="card"><div class="label">Claimed revenue</div><div class="value">{{ s.claimed_revenue_cents|money }}</div>
     <div class="note">every purchase after a message</div></div>
-  <div class="card"><div class="label">Actually caused</div><div class="value">{{ s.caused_revenue_cents|money }}</div>
-    <div class="note">{{ s.anyway_revenue_cents|money }} would have come anyway</div></div>
+  <div class="card"><div class="label">True lift</div><div class="value">{{ s.caused_revenue_cents|money }}</div>
+    <div class="note">{{ s.anyway_revenue_cents|money }} would have come anyway, at full price</div></div>
   <div class="card"><div class="label">Handoffs / discounts</div><div class="value">{{ s.handoffs }} / {{ s.discounted }}</div></div>
   <div class="card"><div class="label">Quality</div><div class="value">{{ s.avg_quality if s.avg_quality is not none else "–" }}</div>
     <div class="note">out of 100: rules + AI judge</div></div>
@@ -25,10 +45,11 @@
 
 <h2>Conversations</h2>
 <table>
-  <tr><th>#</th><th>Shopper type</th><th>Bought</th><th>Would anyway</th><th>Discount</th><th>Handoff</th><th>Quality</th></tr>
+  <tr><th>#</th><th>Group</th><th>Shopper type</th><th>Bought</th><th>Would anyway</th><th>Discount</th><th>Handoff</th><th>Quality</th></tr>
   {% for c in convs %}
   <tr>
     <td><a href="/conversations/{{ c.id }}">{{ c.id }}</a></td>
+    <td>{{ "messaged" if c.arm == "treatment" else "holdout" }}</td>
     <td>{{ personas[c.persona_key].name if c.persona_key in personas else c.persona_key }}</td>
     <td>{{ "yes" if c.purchased else "no" }}</td>
     <td>{{ "yes" if c.would_buy_anyway else "" }}</td>
