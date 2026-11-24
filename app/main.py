@@ -79,6 +79,7 @@ def start_experiment(
     background: BackgroundTasks,
     agent_key: str = Form(...),
     sample_size: int = Form(50),
+    guardrails: bool = Form(False),
     session: Session = Depends(get_session),
 ):
     if agent_key not in AGENTS:
@@ -86,7 +87,7 @@ def start_experiment(
     store = latest_store(session)
     if store is None:
         raise HTTPException(400, "simulate a store first")
-    exp = create_experiment(session, store.id, agent_key, max(1, min(sample_size, 500)))
+    exp = create_experiment(session, store.id, agent_key, max(1, min(sample_size, 500)), guardrails=guardrails)
     if not WORKER_ENABLED:
         background.add_task(_run_in_background, exp.id)
     return RedirectResponse(f"/experiments/{exp.id}", status_code=303)
@@ -99,7 +100,10 @@ def experiment_detail(exp_id: int, request: Request, session: Session = Depends(
         raise HTTPException(404)
     convs = list(
         session.scalars(
-            select(Conversation).where(Conversation.experiment_id == exp.id).order_by(Conversation.id)
+            select(Conversation)
+            .where(Conversation.experiment_id == exp.id)
+            .options(selectinload(Conversation.score))
+            .order_by(Conversation.id)
         )
     )
     return templates.TemplateResponse(
@@ -112,7 +116,7 @@ def conversation_detail(conv_id: int, request: Request, session: Session = Depen
     conv = session.scalars(
         select(Conversation)
         .where(Conversation.id == conv_id)
-        .options(selectinload(Conversation.messages))
+        .options(selectinload(Conversation.messages), selectinload(Conversation.score))
     ).first()
     if conv is None:
         raise HTTPException(404)
@@ -130,4 +134,10 @@ def api_experiment(exp_id: int, session: Session = Depends(get_session)) -> dict
     exp = session.get(Experiment, exp_id)
     if exp is None:
         raise HTTPException(404)
-    return {"id": exp.id, "agent": exp.agent_key, "status": exp.status.value, **asdict(summarize(session, exp))}
+    return {
+        "id": exp.id,
+        "agent": exp.agent_key,
+        "guardrails": exp.guardrails,
+        "status": exp.status.value,
+        **asdict(summarize(session, exp)),
+    }

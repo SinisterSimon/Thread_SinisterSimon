@@ -29,6 +29,23 @@ class LLM(Protocol):
     def complete(self, *, system: str, messages: list[Message], model: str) -> LLMReply: ...
 
 
+def traced(name: str, llm: LLM, *, system: str, messages: list[Message], model: str) -> LLMReply:
+    """Call the model and record the call in Langfuse (a no-op without keys)."""
+    from app.tracing import record_generation
+
+    reply = llm.complete(system=system, messages=messages, model=model)
+    record_generation(
+        name=name,
+        model=reply.model,
+        system=system.split(OfflineLLM.MARKER, 1)[0],
+        messages=[{"role": m.role, "content": m.text} for m in messages],
+        output=reply.text,
+        input_tokens=reply.input_tokens,
+        output_tokens=reply.output_tokens,
+    )
+    return reply
+
+
 class OfflineLLM:
     """Deterministic stand-in for a real model.
 

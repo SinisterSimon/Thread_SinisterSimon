@@ -18,5 +18,27 @@
   <div class="card"><div class="label">Revenue</div><div class="value">{{ c.revenue_cents|money }}</div></div>
   <div class="card"><div class="label">Discount</div><div class="value">{{ c.discount_pct }}%</div></div>
   <div class="card"><div class="label">Tokens</div><div class="value">{{ "{:,}".format(c.input_tokens + c.output_tokens) }}</div></div>
+  {% if c.guardrail_fixes %}<div class="card"><div class="label">Guardrail fixes</div><div class="value">{{ c.guardrail_fixes }}</div></div>{% endif %}
 </div>
+
+{% if c.score %}{% set sc = c.score %}
+<h2>Score: {{ sc.quality }} / 100</h2>
+<div class="grid">
+  <div class="card">
+    <div class="label">Rule checks</div>
+    {% for ok, label in [(sc.addressed_objection, "Dealt with the shopper's concern"),
+                         (sc.correct_handoff, "Handed off only when needed"),
+                         (sc.discount_within_policy, "Discount within policy"),
+                         (sc.no_pressure, "No pressure tactics"),
+                         (sc.respected_browser, "Left browsers alone")] %}
+      <div>{{ "✓" if ok else "✗" }} {{ label }}</div>
+    {% endfor %}
+  </div>
+  <div class="card">
+    <div class="label">AI judge · {{ sc.judge_model }}</div>
+    <div>Helpfulness {{ sc.helpfulness }}/5 · Accuracy {{ sc.accuracy }}/5 · Tone {{ sc.tone }}/5</div>
+    <div class="note" style="margin-top:8px">{{ sc.judge_notes }}</div>
+  </div>
+</div>
+{% endif %}
 {% endblock %}

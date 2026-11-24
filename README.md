@@ -6,7 +6,7 @@ Thread plays simulated shoppers with real personalities against pluggable AI sal
 scores every conversation, and measures each agent's true effect on sales — separating
 real lift from shoppers who would have bought anyway.
 
-> Status: **Phase 2 of 5** — shopper personas, agents and experiment runs.
+> Status: **Phase 3 of 5** — every conversation is scored; guardrails, tracing and migrations.
 
 ## Why
 
@@ -27,7 +27,7 @@ the true effect.
 | 1 | Data model, store simulator, dashboard, CI, deploy | ✅ |
 | 2 | Shopper personas, agent interface, baseline + comparison agents, experiment runs, worker | ✅ |
 | 2.5 | n8n workflows around the API (Slack summaries, scheduled runs) | ⏳ |
-| 3 | Conversation scoring (LLM judge + rule checks), agent tools, guardrails, Langfuse tracing | ⏳ |
+| 3 | Conversation scoring (rules + AI judge), guardrails, Langfuse tracing, Alembic migrations | ✅ |
 | 4 | Randomized holdout groups, estimated vs true lift, agent leaderboard | ⏳ |
 | 5 | Polish: findings write-up, demo video, custom domain, optional real SMS | ⏳ |
 
@@ -51,6 +51,29 @@ Every agent uses the same random draw per checkout ("common random numbers"), so
 
 Add an agent by adding an entry to `app/agents/registry.py`.
 
+## Scoring every conversation
+
+Each finished chat gets a quality score from 0 to 100 (`app/evals/scorer.py`):
+
+- **Five rule checks** (60% of the score), exact and free: dealt with the shopper's real concern; handed off only when needed; discount within policy (max 10%, price concerns only); no pressure tactics; left "just browsing" shoppers alone.
+- **An AI judge** (40%) rates helpfulness, accuracy and tone from 1 to 5. It runs on `JUDGE_MODEL` (Sonnet by default), a different model from the Haiku agents, because models tend to rate writing like their own more kindly. If its reply can't be parsed, the rule-based estimate is used and the note says so.
+
+A **policy break** is a chat that fails the handoff, discount or pressure rule.
+
+## Guardrails
+
+Tick **Guardrails on** when starting an experiment to put the agent behind checks that run outside the model (`app/agents/guardrails.py`): discounts capped at 10% and offered once, pressure sentences removed, and a forced handoff when a shopper asks for a person or reports a billing problem. Every change counts as a fix.
+
+Finding so far (offline): guardrails took the pushy agent from 150 policy breaks to 0 and its quality from 38 to 81, but it caused *less* revenue ($587 vs $1,312), because its stripped-down messages still don't answer anyone's question. Guardrails make a bad agent safe, not good.
+
+## Tracing
+
+Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` and every conversation becomes a Langfuse trace: each agent, shopper and judge call with prompt, reply, model and tokens, plus the quality score. Without keys, tracing is off and nothing else changes (`app/tracing.py`).
+
+## Database migrations
+
+Schema changes are Alembic migrations in `migrations/versions/`, applied automatically when the app or worker starts (`app/migrate.py`). Databases created before Alembic was added are detected and stamped at the baseline revision first, so only newer migrations run. Tests check that the migrations match the models exactly.
+
 ### Offline vs real models
 
 `LLM_MODE=offline` (default) uses scripted replies: free, deterministic, and what the tests use.
@@ -73,6 +96,7 @@ Store events ──▶ Backend (FastAPI + Postgres) ──▶ Conversation engin
 - `orders` — purchases, tagged `same_session` or `returned`
 - `experiments` — one agent run over a sample of checkouts, with status
 - `conversations` + `conversation_messages` — each chat, its transcript and outcome (kept apart from `orders` so repeated runs never double-count revenue)
+- `conversation_scores` — rule results, judge ratings and the 0-100 quality score per chat
 - Fields prefixed `sim_` are simulator ground truth a real store would never see
 
 Money is stored in integer cents.

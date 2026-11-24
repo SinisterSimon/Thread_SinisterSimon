@@ -25,7 +25,7 @@ def get_session() -> Iterator[Session]:
 
 
 def init_db() -> None:
-    """Create tables. Phase 2 replaces this with Alembic migrations."""
-    from app import models  # noqa: F401  (registers the models)
+    """Apply any pending Alembic migrations (see app/migrate.py)."""
+    from app import migrate
 
-    Base.metadata.create_all(engine)
+    migrate.upgrade(engine)
