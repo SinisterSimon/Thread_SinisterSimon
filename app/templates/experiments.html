@@ -10,35 +10,42 @@
       <select name="agent_key">
         {% for key, a in agents.items() %}<option value="{{ key }}">{{ a[0] }}</option>{% endfor %}
       </select></label>
-    <label><div class="label">Shoppers</div><input type="number" name="sample_size" value="50" min="1" max="500" style="width:90px"></label>
+    <label><div class="label">Shoppers</div><input type="number" name="sample_size" value="{{ reachable or 150 }}" min="1" max="5000" style="width:90px"></label>
+    <label><div class="label">Holdout %</div><input type="number" name="holdout_pct" value="50" min="0" max="90" style="width:80px"></label>
     <label style="display:flex;gap:6px;align-items:center;padding-bottom:8px"><input type="checkbox" name="guardrails" value="true"> Guardrails on</label>
     <button type="submit">Start</button>
-    <span class="note">{{ "Queued for the worker." if worker else "Runs right away in the app." }}</span>
+    <span class="note">{{ "Queued for the worker." if worker else "Runs right away in the app." }}
+      The holdout share gets no message; it's how a real store measures lift.</span>
   </form>
 
-  <h2>Results</h2>
+  <h2>Leaderboard</h2>
   {% if not rows %}<p class="note">No experiments yet.</p>{% else %}
   <table>
-    <tr><th>#</th><th>Agent</th><th>Status</th><th>Chats</th><th>Purchases</th>
-        <th>Claimed revenue</th><th>Would have bought anyway</th><th>Actually caused</th>
-        <th>Quality</th><th>Policy breaks</th><th>Guardrail fixes</th><th>Tokens</th></tr>
+    <tr><th>#</th><th>Agent</th><th>Shoppers<br><span class="note">messaged / holdout</span></th>
+        <th>Claimed</th><th>Estimated lift<br><span class="note">from holdout, 95% range</span></th><th>True lift</th>
+        <th>Claimed ÷ true</th><th>Quality</th><th>Policy breaks</th></tr>
     {% for e, s in rows %}
     <tr>
       <td><a href="/experiments/{{ e.id }}">{{ e.id }}</a></td>
-      <td>{{ agents[e.agent_key][0] if e.agent_key in agents else e.agent_key }}{% if e.guardrails %} <span class="pill">guardrails</span>{% endif %}</td>
-      <td><span class="pill">{{ e.status.value }}</span></td>
-      <td>{{ s.conversations }}</td><td>{{ s.purchases }}</td>
+      <td>{{ agents[e.agent_key][0] if e.agent_key in agents else e.agent_key }}
+        {% if e.guardrails %}<span class="pill">guardrails</span>{% endif %}
+        {% if e.status.value != "done" %}<span class="pill">{{ e.status.value }}</span>{% endif %}</td>
+      <td>{{ s.conversations }} / {{ s.holdout_size }}</td>
       <td>{{ s.claimed_revenue_cents|money }}</td>
-      <td>{{ s.anyway_revenue_cents|money }}</td>
-      <td><strong>{{ s.caused_revenue_cents|money }}</strong></td>
+      <td>{% if s.estimate %}<strong>{{ s.estimate.total_lift|money }}</strong>
+          <span class="note">{{ s.estimate.ci_low|money }} to {{ s.estimate.ci_high|money }}</span>
+          {% if not s.estimate.significant %}<br><span class="note">can't tell from $0</span>{% endif %}
+        {% else %}<span class="note">no holdout</span>{% endif %}</td>
+      <td>{{ s.caused_revenue_cents|money }}</td>
+      <td>{{ ("%.1f×"|format(s.claimed_vs_true)) if s.claimed_vs_true else "–" }}</td>
       <td>{{ s.avg_quality if s.avg_quality is not none else "–" }}</td>
-      <td>{{ s.policy_violations }}</td><td>{{ s.guardrail_fixes if e.guardrails else "–" }}</td>
-      <td>{{ "{:,}".format(s.tokens) }}</td>
+      <td>{{ s.policy_violations }}</td>
     </tr>
     {% endfor %}
   </table>
-  <p class="note">"Actually caused" uses the simulator's ground truth; Phase 4 estimates it the way a real store must, with a holdout group.
-  Quality (0-100) combines five rule checks with an AI judge's ratings. A policy break is a chat with a wrong handoff, an off-policy discount or pressure tactics.</p>
+  <p class="note">Sorted by the lift a real store could measure (estimated from the holdout), then by true lift.
+  "True lift" uses the simulator's hidden answers: what messaged shoppers paid minus what they would have paid with no message.
+  Quality (0-100) combines five rule checks with an AI judge.</p>
   {% endif %}
 {% endif %}
 {% endblock %}

@@ -15,6 +15,7 @@ from app import tracing
 from app.agents import AgentContext, get_agent
 from app.agents import guardrails as guard
 from app.evals import score_conversation
+from app.experiments.stats import LiftEstimate, estimate_lift
 from app.llm import LLM, Message
 from app.models import (
     Checkout,
@@ -45,13 +46,19 @@ def _money(cents: int) -> str:
 
 
 def create_experiment(
-    session: Session, store_id: int, agent_key: str, sample_size: int, guardrails: bool = False
+    session: Session,
+    store_id: int,
+    agent_key: str,
+    sample_size: int,
+    guardrails: bool = False,
+    holdout_pct: int = 0,
 ) -> Experiment:
     exp = Experiment(
         store_id=store_id,
         agent_key=agent_key,
         sample_size=sample_size,
         guardrails=guardrails,
+        holdout_pct=max(0, min(holdout_pct, 90)),
         status=ExperimentStatus.queued,
         created_at=datetime.now(),
     )
@@ -84,7 +91,33 @@ def _sample(session: Session, exp: Experiment) -> list[Checkout]:
     return list(session.scalars(stmt))
 
 
+def in_holdout(checkout_id: int, holdout_pct: int) -> bool:
+    """Random but stable: the same checkout always lands in the same arm for a
+    given holdout share, so different agents are compared on the same split."""
+    return random.Random(f"arm:{checkout_id}").random() * 100 < holdout_pct
+
+
+def _holdout(session: Session, exp: Experiment, checkout: Checkout) -> None:
+    """No message is sent. The shopper buys only if they were coming back anyway, at full price."""
+    anyway = checkout.sim_returns_naturally
+    session.add(
+        Conversation(
+            experiment_id=exp.id,
+            checkout_id=checkout.id,
+            persona_key=persona_for(checkout.id).key,
+            arm="holdout",
+            purchased=anyway,
+            would_buy_anyway=anyway,
+            revenue_cents=checkout.total_cents if anyway else 0,
+            baseline_revenue_cents=checkout.total_cents if anyway else 0,
+        )
+    )
+
+
 def _converse(session: Session, exp: Experiment, checkout: Checkout, llm: LLM, store: Store) -> None:
+    if in_holdout(checkout.id, exp.holdout_pct):
+        _holdout(session, exp, checkout)
+        return
     meta = {"experiment_id": exp.id, "agent": exp.agent_key, "checkout_id": checkout.id, "guardrails": exp.guardrails}
     with tracing.conversation_trace(f"conversation:{exp.agent_key}", meta):
         _converse_inner(session, exp, checkout, llm, store)
@@ -152,11 +185,13 @@ def _converse_inner(session: Session, exp: Experiment, checkout: Checkout, llm: 
             experiment_id=exp.id,
             checkout_id=checkout.id,
             persona_key=persona.key,
+            arm="treatment",
             purchased=outcome.purchased,
             would_buy_anyway=outcome.would_buy_anyway,
             handed_off=handed_off,
             discount_pct=discount,
             revenue_cents=revenue,
+            baseline_revenue_cents=checkout.total_cents if outcome.would_buy_anyway else 0,
             input_tokens=tokens_in + j_in,
             output_tokens=tokens_out + j_out,
             guardrail_fixes=fixes,
@@ -202,17 +237,26 @@ def run_experiment(session: Session, exp: Experiment, llm: LLM) -> Experiment:
 
 @dataclass
 class ExperimentSummary:
-    conversations: int
+    conversations: int             # messaged shoppers (treatment arm)
     purchases: int
     claimed_revenue_cents: int     # every purchase after a message
-    anyway_revenue_cents: int      # purchases that would have happened anyway
-    caused_revenue_cents: int      # the true effect (simulator ground truth)
+    anyway_revenue_cents: int      # what those shoppers would have paid with no message
+    caused_revenue_cents: int      # true lift = claimed - anyway (simulator ground truth)
     handoffs: int
     discounted: int
     tokens: int
     avg_quality: float | None        # 0-100, rules + AI judge
     policy_violations: int           # chats that failed a rule check
     guardrail_fixes: int             # agent messages the guardrails changed
+    holdout_size: int = 0
+    estimate: LiftEstimate | None = None  # what a real store would measure
+
+    @property
+    def claimed_vs_true(self) -> float | None:
+        """How many times bigger the claimed number is than the real effect."""
+        if self.caused_revenue_cents <= 0:
+            return None
+        return self.claimed_revenue_cents / self.caused_revenue_cents
 
 
 def summarize(session: Session, exp: Experiment) -> ExperimentSummary:
@@ -223,21 +267,31 @@ def summarize(session: Session, exp: Experiment) -> ExperimentSummary:
             .options(selectinload(Conversation.score))
         )
     )
-    scores = [c.score for c in convs if c.score is not None]
-    claimed = sum(x.revenue_cents for x in convs)
-    anyway = sum(x.revenue_cents for x in convs if x.would_buy_anyway)
+    treated = [c for c in convs if c.arm == "treatment"]
+    held = [c for c in convs if c.arm == "holdout"]
+    scores = [c.score for c in treated if c.score is not None]
+    claimed = sum(x.revenue_cents for x in treated)
+    anyway = sum(x.baseline_revenue_cents for x in treated)
+    estimate = estimate_lift(
+        [c.revenue_cents for c in treated],
+        [c.revenue_cents for c in held],
+        [c.purchased for c in treated],
+        [c.purchased for c in held],
+    )
     return ExperimentSummary(
-        conversations=len(convs),
-        purchases=sum(1 for x in convs if x.purchased),
+        conversations=len(treated),
+        purchases=sum(1 for x in treated if x.purchased),
         claimed_revenue_cents=claimed,
         anyway_revenue_cents=anyway,
         caused_revenue_cents=claimed - anyway,
-        handoffs=sum(1 for x in convs if x.handed_off),
-        discounted=sum(1 for x in convs if x.discount_pct > 0),
-        tokens=sum(x.input_tokens + x.output_tokens for x in convs),
+        handoffs=sum(1 for x in treated if x.handed_off),
+        discounted=sum(1 for x in treated if x.discount_pct > 0),
+        tokens=sum(x.input_tokens + x.output_tokens for x in treated),
         avg_quality=round(sum(s.quality for s in scores) / len(scores), 1) if scores else None,
         policy_violations=sum(
             1 for s in scores if not (s.correct_handoff and s.discount_within_policy and s.no_pressure)
         ),
-        guardrail_fixes=sum(x.guardrail_fixes for x in convs),
+        guardrail_fixes=sum(x.guardrail_fixes for x in treated),
+        holdout_size=len(held),
+        estimate=estimate,
     )

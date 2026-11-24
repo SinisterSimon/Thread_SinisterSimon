@@ -5,6 +5,10 @@
 <h2 style="margin-top:0">{{ personas[c.persona_key].name if c.persona_key in personas else c.persona_key }}</h2>
 <p class="note">{{ personas[c.persona_key].description if c.persona_key in personas else "" }}</p>
 
+{% if c.arm == "holdout" %}
+<div class="callout">Holdout group: this shopper was randomly chosen to get <strong>no message</strong>, so the store can see what happens without one.
+{{ "They came back and bought anyway." if c.purchased else "They did not come back." }}</div>
+{% endif %}
 <div style="max-width:640px">
   {% for m in c.messages %}
     <div class="msg {{ m.sender }}"><div class="label">{{ "Agent" if m.sender == "agent" else "Shopper" }}</div>{{ m.text }}</div>

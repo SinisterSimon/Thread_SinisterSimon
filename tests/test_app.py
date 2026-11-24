@@ -74,6 +74,6 @@ def test_dashboard_flow():
     with TestClient(app) as client:
         assert client.get("/health").json() == {"status": "ok"}
         assert "No store data yet" in client.get("/").text
-        r = client.post("/simulate?days=3", follow_redirects=True)
+        r = client.post("/simulate", data={"days": 3}, follow_redirects=True)
         assert r.status_code == 200 and "Abandoned" in r.text
         assert client.get("/api/metrics").json()["checkouts"] > 0

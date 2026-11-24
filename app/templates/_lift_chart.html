@@ -1,0 +1,34 @@
+{# Claimed vs estimated vs true lift, one zero-anchored axis. Estimate carries its 95% interval. #}
+{% macro lift_chart(s) %}
+{% set est = s.estimate %}
+{% set values = [s.claimed_revenue_cents, s.caused_revenue_cents, 0] + ([est.ci_low, est.ci_high, est.total_lift] if est else []) %}
+{% set lo = [values|min, 0]|min %}{% set hi = [values|max, 1]|max %}
+{% set x0 = 280 %}{% set w = 450 %}
+{% macro usd(v) %}{{ "−" if v < 0 else "" }}${{ "{:,.0f}".format((v / 100)|abs) }}{% endmacro %}
+{% macro X(v) %}{{ x0 + (v - lo) / (hi - lo) * w }}{% endmacro %}
+{% set rows = [("Claimed (every sale after a message)", s.claimed_revenue_cents, "#b4b2a9", none),
+               ("Estimated from holdout", est.total_lift if est else none, "#534ab7", est),
+               ("True lift (simulator truth)", s.caused_revenue_cents, "#26215c", none)] %}
+<svg viewBox="0 0 760 {{ 40 + rows|length * 52 }}" role="img" aria-label="Claimed revenue compared with estimated and true lift" style="width:100%;max-width:760px;font:13px system-ui,sans-serif">
+  <line x1="{{ X(0) }}" x2="{{ X(0) }}" y1="12" y2="{{ 20 + rows|length * 52 }}" stroke="#888780" stroke-width="1"/>
+  <text x="{{ X(0) }}" y="{{ 34 + rows|length * 52 }}" text-anchor="middle" fill="#6b6a65" font-size="11">$0</text>
+  {% for label, v, color, ci in rows %}
+    {% set y = 20 + loop.index0 * 52 %}
+    <text x="0" y="{{ y + 12 }}" fill="#1d1d1b">{{ label }}</text>
+    {% if v is none %}
+      <text x="0" y="{{ y + 30 }}" fill="#6b6a65" font-size="12">No holdout group in this run</text>
+    {% else %}
+      {% set a = [X(0)|float, X(v)|float]|min %}{% set b = [X(0)|float, X(v)|float]|max %}
+      <g><title>{{ label }}: {{ usd(v) }}{% if ci %} (95% range {{ usd(ci.ci_low) }} to {{ usd(ci.ci_high) }}){% endif %}</title>
+        <rect x="{{ a }}" y="{{ y + 6 }}" width="{{ [b - a, 1]|max }}" height="18" rx="4" fill="{{ color }}"/>
+        {% if ci %}
+          <line x1="{{ X(ci.ci_low) }}" x2="{{ X(ci.ci_high) }}" y1="{{ y + 15 }}" y2="{{ y + 15 }}" stroke="#1d1d1b" stroke-width="2"/>
+          <line x1="{{ X(ci.ci_low) }}" x2="{{ X(ci.ci_low) }}" y1="{{ y + 8 }}" y2="{{ y + 22 }}" stroke="#1d1d1b" stroke-width="2"/>
+          <line x1="{{ X(ci.ci_high) }}" x2="{{ X(ci.ci_high) }}" y1="{{ y + 8 }}" y2="{{ y + 22 }}" stroke="#1d1d1b" stroke-width="2"/>
+        {% endif %}
+      </g>
+      <text x="0" y="{{ y + 30 }}" fill="#6b6a65" font-size="12"><tspan font-weight="600" fill="#1d1d1b">{{ usd(v) }}</tspan>{% if ci %}  (95%: {{ usd(ci.ci_low) }} to {{ usd(ci.ci_high) }}){% endif %}</text>
+    {% endif %}
+  {% endfor %}
+</svg>
+{% endmacro %}

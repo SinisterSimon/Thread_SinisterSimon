@@ -21,7 +21,7 @@ from app.shoppers import PERSONAS
 from app.simulator import SimConfig, run_simulation
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
-templates.env.filters["money"] = lambda cents: f"${cents / 100:,.0f}"
+templates.env.filters["money"] = lambda cents: f"{'−' if cents < 0 else ''}${abs(cents) / 100:,.0f}"
 templates.env.globals.update(app_name=APP_NAME, agents=AGENTS, personas={p.key: p for p in PERSONAS})
 
 # With a separate worker service running (Render), experiments wait in the
@@ -59,18 +59,28 @@ def dashboard(request: Request, session: Session = Depends(get_session)):
 
 
 @app.post("/simulate")
-def simulate(seed: int = 42, days: int = 30, session: Session = Depends(get_session)):
-    run_simulation(session, SimConfig(seed=seed, days=days))
+def simulate(days: int = Form(30), seed: int = Form(42), session: Session = Depends(get_session)):
+    run_simulation(session, SimConfig(seed=seed, days=max(1, min(days, 365))))
     return RedirectResponse("/", status_code=303)
 
 
 @app.get("/experiments", response_class=HTMLResponse)
 def experiments_page(request: Request, session: Session = Depends(get_session)):
     store = latest_store(session)
-    exps = list(session.scalars(select(Experiment).order_by(Experiment.id.desc()))) if store else []
+    exps = (
+        list(session.scalars(select(Experiment).where(Experiment.store_id == store.id))) if store else []
+    )
     rows = [(e, summarize(session, e)) for e in exps]
+    # Leaderboard: what a real store could measure first (holdout estimate), then the truth.
+    rows.sort(
+        key=lambda r: (r[1].estimate.total_lift if r[1].estimate else float("-inf"), r[1].caused_revenue_cents),
+        reverse=True,
+    )
+    reachable = store_metrics(session, store).reachable_abandoned if store else 0
     return templates.TemplateResponse(
-        request, "experiments.html", {"store": store, "rows": rows, "worker": WORKER_ENABLED}
+        request,
+        "experiments.html",
+        {"store": store, "rows": rows, "worker": WORKER_ENABLED, "reachable": reachable},
     )
 
 
@@ -80,6 +90,7 @@ def start_experiment(
     agent_key: str = Form(...),
     sample_size: int = Form(50),
     guardrails: bool = Form(False),
+    holdout_pct: int = Form(0),
     session: Session = Depends(get_session),
 ):
     if agent_key not in AGENTS:
@@ -87,7 +98,9 @@ def start_experiment(
     store = latest_store(session)
     if store is None:
         raise HTTPException(400, "simulate a store first")
-    exp = create_experiment(session, store.id, agent_key, max(1, min(sample_size, 500)), guardrails=guardrails)
+    exp = create_experiment(
+        session, store.id, agent_key, max(1, min(sample_size, 5000)), guardrails=guardrails, holdout_pct=holdout_pct
+    )
     if not WORKER_ENABLED:
         background.add_task(_run_in_background, exp.id)
     return RedirectResponse(f"/experiments/{exp.id}", status_code=303)
@@ -138,6 +151,7 @@ def api_experiment(exp_id: int, session: Session = Depends(get_session)) -> dict
         "id": exp.id,
         "agent": exp.agent_key,
         "guardrails": exp.guardrails,
+        "holdout_pct": exp.holdout_pct,
         "status": exp.status.value,
         **asdict(summarize(session, exp)),
     }
