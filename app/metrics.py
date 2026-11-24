@@ -22,8 +22,12 @@ class StoreMetrics:
     returned_revenue_cents: int
 
 
-def latest_store(session: Session) -> Store | None:
-    return session.scalars(select(Store).order_by(Store.id.desc()).limit(1)).first()
+def latest_store(session: Session, source: str = "simulated") -> Store | None:
+    """The newest store of one kind. Simulated and real stores never mix: the
+    lab's experiments need ground truth that only a simulated store has."""
+    return session.scalars(
+        select(Store).where(Store.source == source).order_by(Store.id.desc()).limit(1)
+    ).first()
 
 
 def store_metrics(session: Session, store: Store) -> StoreMetrics:

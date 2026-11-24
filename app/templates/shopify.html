@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Live store{% endblock %}
+{% block head %}{% if running %}<meta http-equiv="refresh" content="4">{% endif %}{% endblock %}
+{% block content %}
+<h2 style="margin-top:0">Live store · shadow mode</h2>
+<p class="note" style="max-width:720px">
+  Thread reads abandoned checkouts from a real Shopify development store (read-only API access), and the agents
+  draft the message they would send each shopper. <strong>Nothing is sent.</strong> Real shoppers don't reply to a
+  lab, so there is no lift here: shadow mode shows what an agent would say to actual customers before anyone trusts it.
+</p>
+
+{% if error %}<div class="card" style="border-color:#c0392b;margin-bottom:16px"><strong>Shopify said no.</strong> <span class="note">{{ error }}</span></div>{% endif %}
+{% if msg %}<div class="card" style="margin-bottom:16px">{{ msg }}</div>{% endif %}
+
+{% if not connected %}
+  <div class="empty">
+    <p>No Shopify store connected.</p>
+    <p class="note">Set <code>SHOPIFY_STORE</code>, <code>SHOPIFY_CLIENT_ID</code> and <code>SHOPIFY_CLIENT_SECRET</code>
+      (in <code>.env</code> locally, or the Render environment), then restart. See the README.</p>
+  </div>
+{% else %}
+  <form method="post" action="/shopify/sync" style="display:flex;gap:12px;align-items:center;margin-bottom:16px">
+    <button type="submit">Sync from Shopify</button>
+    <span class="note">{{ domain }}{% if store %} · {{ store.name }} · {{ store.currency }}{% endif %}</span>
+  </form>
+
+  {% if not store %}
+    <div class="empty"><p>Connected, nothing imported yet. Click <strong>Sync from Shopify</strong>.</p></div>
+  {% else %}
+    <h2>Abandoned checkouts ({{ checkouts|length }})</h2>
+    {% if not checkouts %}<p class="note">None yet. Shopify lists a checkout as abandoned about 10 minutes after the shopper leaves.</p>{% else %}
+    <table>
+      <tr><th>Checkout</th><th>Shopper</th><th>Contact</th><th>Cart</th><th>Total</th><th>Started</th></tr>
+      {% for c in checkouts %}
+      <tr>
+        <td>{{ c.external_name or c.id }}</td>
+        <td>{{ c.customer.first_name }}</td>
+        <td class="note">{{ c.customer.phone|mask_phone or c.customer.email|mask_email }}<br>{{ c.customer.preferred_channel }}</td>
+        <td>{% for i in c.items %}{{ i.quantity }} × {{ i.product.title }}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+        <td>{{ "{:,.2f}".format(c.total_cents / 100) }} {{ store.currency }}</td>
+        <td class="note">{{ c.started_at.strftime("%b %d, %H:%M") }} UTC</td>
+      </tr>
+      {% endfor %}
+    </table>
+
+    <h2>Draft messages</h2>
+    <form method="post" action="/shopify/draft" class="card" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap">
+      <label><div class="label">Agent</div>
+        <select name="agent_key">{% for key, a in agents.items() %}<option value="{{ key }}">{{ a[0] }}</option>{% endfor %}</select></label>
+      <label style="display:flex;gap:6px;align-items:center;padding-bottom:8px"><input type="checkbox" name="guardrails" value="true"> Guardrails on</label>
+      <button type="submit">Draft for every checkout</button>
+      <span class="note">Writes one opening message per shopper. Nothing leaves Thread.</span>
+    </form>
+    {% endif %}
+
+    {% for e in shadows %}
+      <div class="card" style="margin-top:16px">
+        <p style="margin:0 0 8px"><strong>{{ agents[e.agent_key][0] }}</strong>
+          {% if e.guardrails %} · guardrails{% endif %} · <span class="note">{{ e.status.value }}{% if e.error %}: {{ e.error }}{% endif %}</span></p>
+        {% if e.status.value in ("queued", "running") %}<p class="note">Drafting… this page refreshes itself.</p>{% endif %}
+        {% for conv in e.conversations %}
+          {% set co = by_id.get(conv.checkout_id) %}
+          <div style="border-top:1px solid var(--line);padding:10px 0">
+            <div class="note">{{ co.external_name if co else conv.checkout_id }} · {{ co.customer.first_name if co else "" }}
+              {% if conv.discount_pct %} · <strong style="color:#c0392b">offers {{ conv.discount_pct }}% off unprompted</strong>{% endif %}
+              {% if conv.guardrail_fixes %} · guardrails changed {{ conv.guardrail_fixes }} sentence(s){% endif %}
+              {% if conv.handed_off %} · hands off to a human{% endif %}</div>
+            <div>{{ conv.messages[0].text if conv.messages else "" }}</div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endfor %}
+  {% endif %}
+{% endif %}
+{% endblock %}

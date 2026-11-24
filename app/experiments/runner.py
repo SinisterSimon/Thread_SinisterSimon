@@ -41,8 +41,13 @@ STORE_FACTS = [
 ]
 
 
-def _money(cents: int) -> str:
-    return f"${cents / 100:,.2f}"
+SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£"}
+
+
+def _money(cents: int, currency: str = "USD") -> str:
+    symbol = SYMBOLS.get(currency)
+    amount = f"{cents / 100:,.2f}"
+    return f"{symbol}{amount}" if symbol else f"{amount} {currency}"
 
 
 def create_experiment(
@@ -52,13 +57,15 @@ def create_experiment(
     sample_size: int,
     guardrails: bool = False,
     holdout_pct: int = 0,
+    shadow: bool = False,
 ) -> Experiment:
     exp = Experiment(
         store_id=store_id,
         agent_key=agent_key,
         sample_size=sample_size,
         guardrails=guardrails,
-        holdout_pct=max(0, min(holdout_pct, 90)),
+        holdout_pct=0 if shadow else max(0, min(holdout_pct, 90)),
+        shadow=shadow,
         status=ExperimentStatus.queued,
         created_at=datetime.now(),
     )
@@ -89,6 +96,66 @@ def _sample(session: Session, exp: Experiment) -> list[Checkout]:
         .limit(exp.sample_size)
     )
     return list(session.scalars(stmt))
+
+
+def _shadow_sample(session: Session, exp: Experiment) -> list[Checkout]:
+    """Every real abandoned checkout we could contact by text or email."""
+    stmt = (
+        select(Checkout)
+        .join(Customer, Customer.id == Checkout.customer_id)
+        .where(
+            Checkout.store_id == exp.store_id,
+            Checkout.status == CheckoutStatus.abandoned,
+            (Customer.phone.is_not(None)) | (Customer.email.is_not(None)),
+        )
+        .options(
+            selectinload(Checkout.customer),
+            selectinload(Checkout.items).selectinload(CheckoutItem.product),
+        )
+        .order_by(Checkout.started_at.desc())
+        .limit(exp.sample_size)
+    )
+    return list(session.scalars(stmt))
+
+
+def _context(store: Store, checkout: Checkout) -> AgentContext:
+    return AgentContext(
+        store_name=store.name,
+        first_name=checkout.customer.first_name,
+        cart_lines=[
+            f"{i.quantity} x {i.product.title} ({_money(i.unit_price_cents, store.currency)})" for i in checkout.items
+        ],
+        cart_total=_money(checkout.total_cents, store.currency),
+        store_facts=STORE_FACTS,
+    )
+
+
+def _draft(session: Session, exp: Experiment, checkout: Checkout, llm: LLM, store: Store) -> None:
+    """Shadow mode: write the opening message for a real shopper, and keep it. Send nothing.
+
+    There is no reply and no outcome, so no lift: shadow mode answers "what would
+    this agent say to our actual customers?" before anyone trusts it with a send button.
+    """
+    meta = {"experiment_id": exp.id, "agent": exp.agent_key, "checkout_id": checkout.id, "shadow": True}
+    with tracing.conversation_trace(f"draft:{exp.agent_key}", meta):
+        turn = get_agent(exp.agent_key, llm).respond([], _context(store, checkout))
+        fixes = 0
+        if exp.guardrails:
+            turn, fixes = guard.apply(turn, last_shopper_text=None, discount_already_offered=False)
+    session.add(
+        Conversation(
+            experiment_id=exp.id,
+            checkout_id=checkout.id,
+            persona_key="real",
+            arm="shadow",
+            handed_off=turn.handoff,
+            discount_pct=turn.discount_pct,
+            input_tokens=turn.input_tokens,
+            output_tokens=turn.output_tokens,
+            guardrail_fixes=fixes,
+            messages=[ConversationMessage(seq=0, sender="agent", text=turn.text)],
+        )
+    )
 
 
 def in_holdout(checkout_id: int, holdout_pct: int) -> bool:
@@ -126,13 +193,7 @@ def _converse(session: Session, exp: Experiment, checkout: Checkout, llm: LLM, s
 def _converse_inner(session: Session, exp: Experiment, checkout: Checkout, llm: LLM, store: Store) -> None:
     agent = get_agent(exp.agent_key, llm)
     persona = persona_for(checkout.id)
-    ctx = AgentContext(
-        store_name=store.name,
-        first_name=checkout.customer.first_name,
-        cart_lines=[f"{i.quantity} x {i.product.title} ({_money(i.unit_price_cents)})" for i in checkout.items],
-        cart_total=_money(checkout.total_cents),
-        store_facts=STORE_FACTS,
-    )
+    ctx = _context(store, checkout)
     shopper = ShopperBot(persona, llm, ctx.first_name, ", ".join(ctx.cart_lines))
 
     history: list[Message] = []
@@ -222,8 +283,12 @@ def run_experiment(session: Session, exp: Experiment, llm: LLM) -> Experiment:
     session.commit()
     try:
         store = session.get(Store, exp.store_id)
-        for checkout in _sample(session, exp):
-            _converse(session, exp, checkout, llm, store)
+        if exp.shadow:
+            for checkout in _shadow_sample(session, exp):
+                _draft(session, exp, checkout, llm, store)
+        else:
+            for checkout in _sample(session, exp):
+                _converse(session, exp, checkout, llm, store)
         exp.status = ExperimentStatus.done
         tracing.flush()
     except Exception as err:  # keep the failure visible on the page

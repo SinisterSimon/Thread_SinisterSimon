@@ -34,6 +34,9 @@ class Store(Base):
     name: Mapped[str] = mapped_column(String(120))
     currency: Mapped[str] = mapped_column(String(3), default="USD")
     created_at: Mapped[datetime] = mapped_column(DateTime)
+    # v2: "simulated" (made by the simulator) or "shopify" (imported from a real store).
+    source: Mapped[str] = mapped_column(String(20), default="simulated", server_default="simulated", index=True)
+    shop_domain: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     products: Mapped[list["Product"]] = relationship(back_populates="store")
     customers: Mapped[list["Customer"]] = relationship(back_populates="store")
@@ -48,6 +51,7 @@ class Product(Base):
     category: Mapped[str] = mapped_column(String(60))
     price_cents: Mapped[int] = mapped_column(Integer)
     unit_cost_cents: Mapped[int] = mapped_column(Integer)  # for margin / contribution
+    external_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)  # Shopify GID
 
     store: Mapped[Store] = relationship(back_populates="products")
 
@@ -59,6 +63,8 @@ class Customer(Base):
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
     first_name: Mapped[str] = mapped_column(String(60))
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    external_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)  # Shopify GID
     sms_consent: Mapped[bool] = mapped_column(Boolean, default=False)
     preferred_channel: Mapped[str] = mapped_column(String(20), default="sms")
     price_sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -78,6 +84,9 @@ class Checkout(Base):
     total_cents: Mapped[int] = mapped_column(Integer)
     started_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     abandoned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    external_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)  # Shopify GID
+    # Shopify's checkout name, e.g. "#1001"; empty for simulated checkouts.
+    external_name: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     # Set in Phase 4 when a checkout is randomly assigned to an experiment arm.
     experiment_group: Mapped[ExperimentGroup | None] = mapped_column(
@@ -151,6 +160,9 @@ class Experiment(Base):
     guardrails: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     # Phase 4: share of sampled checkouts randomly kept message-free (0-90).
     holdout_pct: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # v2 shadow mode: the agent only drafts its first message for real abandoned
+    # checkouts. Nothing is sent, so there is no shopper reply and no outcome.
+    shadow: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     status: Mapped[ExperimentStatus] = mapped_column(
         Enum(ExperimentStatus), default=ExperimentStatus.queued, index=True
     )
