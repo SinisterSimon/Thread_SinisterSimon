@@ -4,20 +4,21 @@ import os
 import threading
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.agents import AGENTS
 from app.config import APP_NAME
 from app.db import SessionLocal, get_session, init_db
 from app.experiments import create_experiment, run_experiment, summarize
-from app.llm import get_llm
+from app.llm import get_llm, mode_for
 from app.metrics import latest_store, store_metrics
 from app.models import Checkout, CheckoutItem, CheckoutStatus, Conversation, Experiment
 from app.shopify import ShopifyError, client_from_env, sync_store
@@ -101,7 +102,7 @@ def _run_in_background(experiment_id: int) -> None:
     with SessionLocal() as session:
         exp = session.get(Experiment, experiment_id)
         if exp is not None:
-            run_experiment(session, exp, get_llm())
+            run_experiment(session, exp, get_llm(shadow=exp.shadow))
 
 
 @app.get("/health")
@@ -264,6 +265,24 @@ templates.env.filters["mask_email"] = _mask_email
 templates.env.filters["mask_phone"] = _mask_phone
 
 
+# With a real model behind the public Live store, anyone can click "Draft".
+# These caps keep that to cents: a run drafts at most DRAFT_MAX_CHECKOUTS
+# messages, and at most DRAFT_RUNS_PER_DAY runs start in 24 hours.
+DRAFT_MAX_CHECKOUTS = int(os.getenv("DRAFT_MAX_CHECKOUTS", "25"))
+DRAFT_RUNS_PER_DAY = int(os.getenv("DRAFT_RUNS_PER_DAY", "30"))
+
+
+def _draft_runs_left(session: Session) -> int | None:
+    """Runs left today, or None when drafts are offline (free, so no cap)."""
+    if mode_for(shadow=True) == "offline":
+        return None
+    since = datetime.now() - timedelta(days=1)
+    used = session.scalar(
+        select(func.count(Experiment.id)).where(Experiment.shadow, Experiment.created_at >= since)
+    ) or 0
+    return max(0, DRAFT_RUNS_PER_DAY - used)
+
+
 @app.get("/shopify", response_class=HTMLResponse)
 def shopify_page(request: Request, msg: str = "", error: str = "", session: Session = Depends(get_session)):
     client = client_from_env()
@@ -302,6 +321,8 @@ def shopify_page(request: Request, msg: str = "", error: str = "", session: Sess
             "by_id": by_id,
             "shadows": shadows,
             "running": any(e.status.value in ("queued", "running") for e in shadows),
+            "draft_mode": mode_for(shadow=True),
+            "runs_left": _draft_runs_left(session),
             "msg": msg,
             "error": error,
         },
@@ -333,7 +354,10 @@ def shopify_draft(
     store = latest_store(session, source="shopify")
     if store is None:
         raise HTTPException(400, "sync a Shopify store first")
-    exp = create_experiment(session, store.id, agent_key, 500, guardrails=guardrails, shadow=True)
+    if _draft_runs_left(session) == 0:
+        note = "Daily limit for real-model drafts reached. Try again tomorrow."
+        return RedirectResponse("/shopify?error=" + quote(note), status_code=303)
+    exp = create_experiment(session, store.id, agent_key, DRAFT_MAX_CHECKOUTS, guardrails=guardrails, shadow=True)
     if not WORKER_ENABLED:
         background.add_task(_run_in_background, exp.id)
     return RedirectResponse("/shopify", status_code=303)

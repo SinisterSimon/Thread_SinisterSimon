@@ -39,7 +39,7 @@ def run_once() -> int:
     with SessionLocal() as session:
         while (exp := claim_next(session)) is not None:
             log.info("running experiment %s (%s)", exp.id, exp.agent_key)
-            run_experiment(session, exp, get_llm())
+            run_experiment(session, exp, get_llm(shadow=exp.shadow))
             ran += 1
     return ran
 
