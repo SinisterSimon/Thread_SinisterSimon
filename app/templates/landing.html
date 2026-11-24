@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}A test lab for AI sales agents{% endblock %}
+{% block content %}
+<section class="hero">
+  <p class="label">Thread · portfolio project</p>
+  <h1>Counting every sale after a message overstated what the messages caused by 1.6–4.7×.</h1>
+  <p class="lead">
+    Thread is a test lab for AI sales agents. Simulated shoppers with real objections talk to pluggable agents,
+    every conversation is scored, and a randomized holdout group measures what each agent really adds,
+    then checks that estimate against the simulator's hidden truth.
+  </p>
+  <form method="post" action="/demo" style="display:inline">
+    <button type="submit">Run the demo</button>
+  </form>
+  <a class="button btn-secondary" href="/experiments">See the experiments</a>
+  <a class="button btn-secondary" href="{{ repo_url }}/blob/main/docs/findings.md">Read the findings</a>
+  <p class="note">The demo simulates a 180-day store and runs three agents with a 50% holdout. It takes about a minute.</p>
+</section>
+
+<h2>What it found</h2>
+<div class="grid">
+  <div class="card finding"><div class="label">Claimed vs real</div><div class="value">1.6–4.7×</div>
+    <div class="note">"Every sale after a message" overstated the true lift in all 10 runs.</div></div>
+  <div class="card finding"><div class="label">Holdout estimate</div><div class="value">9 of 10</div>
+    <div class="note">runs where the 95% range contained the true lift, as a 95% range should.</div></div>
+  <div class="card finding"><div class="label">Pushy discounter vs baseline</div><div class="value">66–76% less</div>
+    <div class="note">real lift. 20% off for everyone mostly discounts people who were buying anyway.</div></div>
+  <div class="card finding"><div class="label">Guardrails on the pushy agent</div><div class="value">All → 0</div>
+    <div class="note">policy breaks, but real lift fell further in every store. Guardrails make an agent safe, not good.</div></div>
+</div>
+<p class="note">Five simulated 180-day stores, 50% holdout, offline mode with scripted agents. Method and full results in the findings report.</p>
+
+<h2>How it works</h2>
+<ol class="steps">
+  <li><strong>Simulate a store.</strong> Checkouts, abandonments and shoppers who come back on their own, with the truth recorded but hidden.</li>
+  <li><strong>Split at random.</strong> A share of abandoned checkouts gets no message. That holdout is how a real store measures lift.</li>
+  <li><strong>Let agents talk.</strong> Each agent texts five kinds of shopper: price-sensitive, unsure about fit, worried about delivery, just browsing, frustrated.</li>
+  <li><strong>Score and measure.</strong> Rules plus an AI judge rate every chat; the holdout estimate is compared with the true lift.</li>
+</ol>
+
+<h2>Under the hood</h2>
+<div class="card" style="font-size:14px">
+  Python 3.12 · FastAPI · Postgres (Neon) · SQLAlchemy + Alembic · Claude models behind one LLM layer, with a free offline mode ·
+  guardrails outside the model · Langfuse tracing · background worker · CI on GitHub Actions · deployed on Render.
+</div>
+{% endblock %}

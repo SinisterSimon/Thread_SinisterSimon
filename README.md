@@ -2,58 +2,68 @@
 
 **A test lab for AI sales agents: simulated shoppers, scored conversations, measured lift.**
 
-Thread plays simulated shoppers with real personalities against pluggable AI sales agents,
-scores every conversation, and measures each agent's true effect on sales — separating
-real lift from shoppers who would have bought anyway.
+Counting every sale after a message overstated what the messages caused by **1.6–4.7×**. Thread shows that, and shows how a randomized holdout group recovers the real number.
 
-> Status: **Phase 4 of 5** — holdout groups estimate real lift the way a real store must, checked against the truth.
+Simulated shoppers with real objections talk to pluggable AI agents. Every conversation is scored by rules and an AI judge, and a holdout group estimates what each agent really adds. Because the simulator knows the truth, every estimate can be checked against it.
 
-## Why
+**Live demo:** https://thread-fszp.onrender.com (free hosting: the first visit can take up to a minute to wake up)
+**Findings report:** [docs/findings.md](docs/findings.md)
 
-Roughly 7 in 10 online carts are abandoned, and recovery tools usually report every
-purchase that follows a message as "recovered." Some of those shoppers were coming
-back regardless. Thread treats that as the core product question: every claim on
-the dashboard should be backed by a comparison against a group that got no message.
+![Landing page](docs/screenshots/landing.png)
 
-Because real store data is hard to get, Thread ships with a **simulator** that
-generates realistic traffic *with ground truth*: it knows which abandoned shoppers
-would return on their own. That lets us check whether the measurement method finds
-the true effect.
+## Findings
 
-## Roadmap
+Five simulated 180-day stores, 50% holdout, offline mode ([full report](docs/findings.md)):
 
-| Phase | What | Status |
-|---|---|---|
-| 1 | Data model, store simulator, dashboard, CI, deploy | ✅ |
-| 2 | Shopper personas, agent interface, baseline + comparison agents, experiment runs, worker | ✅ |
-| 2.5 | n8n workflows around the API (Slack summaries, scheduled runs) | ⏳ |
-| 3 | Conversation scoring (rules + AI judge), guardrails, Langfuse tracing, Alembic migrations | ✅ |
-| 4 | Randomized holdout groups, estimated vs true lift, agent leaderboard | ✅ |
-| 5 | Polish: findings write-up, demo video, custom domain, optional real SMS | ⏳ |
+- **Claimed revenue is the wrong number.** "Every sale after a message" overstated the true lift in all 10 runs, by 1.6–4.7×.
+- **A holdout group recovers the real effect.** The 95% range contained the true lift in 9 of 10 runs, which is what a 95% range should do.
+- **Answering the actual question beats discounting.** An agent offering 20% off to everyone caused 66–76% less real lift than one that answers the shopper's concern.
+- **Guardrails make an agent safe, not good.** On the pushy agent they cut policy breaks to zero and doubled quality scores, but real lift fell further in every store.
+- **Small stores can't measure small effects.** With 273 textable shoppers, a store couldn't tell whether the pushy agent helped at all.
 
-## How an experiment works
+| Leaderboard | One experiment |
+|---|---|
+| ![Leaderboard](docs/screenshots/leaderboard.png) | ![Experiment](docs/screenshots/experiment.png) |
 
-1. **Sample:** take the store's abandoned checkouts whose shopper can be texted, in a fixed order, so every agent meets the same shoppers.
-2. **Persona:** each checkout is played by one of five shopper types — price-sensitive, unsure about fit, worried about delivery, just browsing, or frustrated. Each has an objection (`app/shoppers/personas.py`).
-3. **Conversation:** the agent texts first, the shopper replies, up to three rounds. The agent can end the chat (`[END]`) or hand off to a human (`[HANDOFF]`).
-4. **Outcome:** a small, documented model decides whether the shopper bought (`app/shoppers/outcome.py`). Shoppers the simulator marked as returning anyway always buy — the agent gets no real credit for them.
-5. **Summary:** claimed revenue (every purchase after a message) vs revenue that would have come anyway vs revenue the agent actually caused.
+| A good handoff, scored 100 | The pushy agent with a browser, scored 34 |
+|---|---|
+| ![Handoff transcript](docs/screenshots/transcript-handoff.png) | ![Pushy transcript](docs/screenshots/transcript-pushy.png) |
 
-Every agent uses the same random draw per checkout ("common random numbers"), so two agents that behave the same get the same results and any difference is real.
+## How it works
+
+```mermaid
+flowchart LR
+    SIM[Store simulator<br/>checkouts + hidden truth] --> SPLIT{Random split}
+    SPLIT -->|holdout| HOLD[No message]
+    SPLIT -->|messaged| AGENT[AI agent]
+    AGENT <-->|up to 3 rounds| SHOP[Simulated shopper<br/>5 personas]
+    AGENT --> GUARD[Guardrails<br/>optional]
+    GUARD --> SHOP
+    SHOP --> OUT[Outcome model]
+    HOLD --> OUT
+    OUT --> SCORE[Scoring<br/>5 rules + AI judge]
+    OUT --> LIFT[Lift estimate<br/>holdout vs messaged, 95% range]
+    SCORE --> BOARD[Leaderboard]
+    LIFT --> BOARD
+```
+
+1. **Simulate a store.** Products, customers, checkouts and abandonments. About 15% of abandoned shoppers come back on their own; the simulator records who (`sim_` fields) but the measurement never looks.
+2. **Split at random.** A share of abandoned, textable checkouts gets no message. Assignment is stable per checkout, so every agent meets the same shoppers and the same split.
+3. **Talk.** The agent texts first; the shopper, one of five personas with a hidden objection, replies; up to three rounds. The agent can end the chat (`[END]`) or hand off to a person (`[HANDOFF]`).
+4. **Decide the outcome.** A small documented model (`app/shoppers/outcome.py`): returners always buy, browsers never do, everyone else is more likely to buy if the agent dealt with their objection.
+5. **Score and measure.** Every chat gets a quality score; the holdout comparison estimates the lift; the page shows claimed vs estimated vs true.
 
 ### Agents
 
 | Key | Strategy | Model |
 |---|---|---|
-| `baseline-haiku` | Answers the real objection, max 10% off for price only, hands off upset shoppers | Claude Haiku |
-| `baseline-sonnet` | Same rules, bigger model — is it worth the cost? | Claude Sonnet |
-| `pushy-haiku` | 20% off every message, never hands off — the strategy to beat | Claude Haiku |
+| `baseline-haiku` | Answers the real objection, max 10% off for price only, hands off upset shoppers, leaves browsers alone | Claude Haiku |
+| `baseline-sonnet` | Same rules, bigger model: is it worth the cost? | Claude Sonnet |
+| `pushy-haiku` | 20% off in every message, urgency, never hands off: the strategy to beat | Claude Haiku |
 
-Add an agent by adding an entry to `app/agents/registry.py`.
+Add an agent with one entry in `app/agents/registry.py`.
 
-## Measuring lift with a holdout group
-
-A real store never knows which shoppers would have bought anyway. What it can do is randomly keep a share of abandoned checkouts message-free (the **holdout**) and compare revenue per shopper between the two groups (`app/experiments/stats.py`):
+### Measuring lift
 
 ```
 lift per shopper     = mean revenue (messaged) − mean revenue (holdout)
@@ -61,119 +71,93 @@ estimated total lift = lift per shopper × messaged shoppers
 95% range            = difference ± 1.96 × Welch standard error, scaled the same way
 ```
 
-Assignment is random but stable per checkout, so every agent run with the same holdout share is compared on the same split. Because the simulator knows the truth, each experiment page shows three numbers side by side: what's **claimed** (every sale after a message), what the holdout **estimates**, and the **true lift**.
+**True lift** = what messaged shoppers paid − what they would have paid with no message. A discount given to someone who was buying anyway counts against the agent.
 
-**True lift** = what messaged shoppers paid − what they would have paid with no message. Shoppers coming back anyway would have paid full price, so a discount given to them counts against the agent.
+### Scoring
 
-### Findings (offline, default seed, 50% holdout)
+Each chat gets 0–100 (`app/evals/scorer.py`): **five rule checks** (60%), exact and free, and an **AI judge** (40%) rating helpfulness, accuracy and tone. The judge runs on a different model from the agents (`JUDGE_MODEL`, Sonnet by default), because models tend to rate writing like their own more kindly. A **policy break** is a chat with a wrong handoff, an off-policy discount or pressure tactics.
 
-| Store | Agent | Claimed | Estimated (95% range) | True | Claimed ÷ true |
-|---|---|---|---|---|---|
-| 30 days, 273 textable | Baseline | $3,153 | $1,477 ($71 to $2,882) | $1,859 | 1.7× |
-| 30 days, 273 textable | Pushy | $2,021 | $345 (−$884 to $1,573) | $727 | 2.8× |
-| 180 days, 1,587 textable | Baseline | $24,178 | $13,873 ($10,171 to $17,576) | $11,157 | 2.2× |
-| 180 days, 1,587 textable | Pushy | $16,500 | $6,195 ($2,957 to $9,433) | $3,479 | 4.7× |
+### Guardrails
 
-- **The holdout estimate works**: the 95% range contained the true lift in every run.
-- **Claimed revenue overstates the effect by roughly 2–5×**, and more for agents that discount people who were buying anyway.
-- **Small stores can't measure small effects.** With 273 textable shoppers, the pushy agent's range includes $0: a real store that size could not tell whether its messages helped at all. Sample size, not cleverness, sets what you can know.
+Optional per experiment (`app/agents/guardrails.py`). They run outside the model, so they hold even when a prompt is ignored: discounts capped at 10% and offered once, pressure sentences removed, a forced handoff when a shopper asks for a person or reports a billing problem. Every change counts as a fix.
 
-## Scoring every conversation
+## Design decisions
 
-Each finished chat gets a quality score from 0 to 100 (`app/evals/scorer.py`):
+- **A simulator with ground truth.** Real stores never know who would have bought anyway. Recording it lets the lab test the *measurement method*, not just the agents.
+- **Common random numbers.** Every agent gets the same random draws per checkout, so two agents that behave the same score the same and every difference is due to behaviour.
+- **Outcomes live in `conversations`, not `orders`.** Running several agents over the same checkouts never double-counts store revenue.
+- **One LLM layer with an offline mode** (`app/llm/`). Tests and demos cost nothing; switching providers is one class; every call can be traced.
+- **Guardrails outside the model.** A prompt is a request; a guardrail is a guarantee.
+- **Migrations that adopt an existing database.** The live database predates Alembic, so startup detects that and stamps the baseline before upgrading. Tests check that migrations match the models exactly.
+- **Money in integer cents.** No floating-point rounding in revenue.
 
-- **Five rule checks** (60% of the score), exact and free: dealt with the shopper's real concern; handed off only when needed; discount within policy (max 10%, price concerns only); no pressure tactics; left "just browsing" shoppers alone.
-- **An AI judge** (40%) rates helpfulness, accuracy and tone from 1 to 5. It runs on `JUDGE_MODEL` (Sonnet by default), a different model from the Haiku agents, because models tend to rate writing like their own more kindly. If its reply can't be parsed, the rule-based estimate is used and the note says so.
+## Stack
 
-A **policy break** is a chat that fails the handoff, discount or pressure rule.
-
-## Guardrails
-
-Tick **Guardrails on** when starting an experiment to put the agent behind checks that run outside the model (`app/agents/guardrails.py`): discounts capped at 10% and offered once, pressure sentences removed, and a forced handoff when a shopper asks for a person or reports a billing problem. Every change counts as a fix.
-
-Finding so far (offline): guardrails took the pushy agent from 150 policy breaks to 0 and its quality from 38 to 81, but it caused *less* revenue ($587 vs $1,312), because its stripped-down messages still don't answer anyone's question. Guardrails make a bad agent safe, not good.
-
-## Tracing
-
-Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` and every conversation becomes a Langfuse trace: each agent, shopper and judge call with prompt, reply, model and tokens, plus the quality score. Without keys, tracing is off and nothing else changes (`app/tracing.py`).
-
-## Database migrations
-
-Schema changes are Alembic migrations in `migrations/versions/`, applied automatically when the app or worker starts (`app/migrate.py`). Databases created before Alembic was added are detected and stamped at the baseline revision first, so only newer migrations run. Tests check that the migrations match the models exactly.
-
-### Offline vs real models
-
-`LLM_MODE=offline` (default) uses scripted replies: free, deterministic, and what the tests use.
-`LLM_MODE=anthropic` with `ANTHROPIC_API_KEY` set uses real Claude models for both the agents and the shoppers.
-All model calls go through `app/llm/`, so adding OpenAI later means one new class.
-
-## Architecture (target)
-
-```
-Store events ──▶ Backend (FastAPI + Postgres) ──▶ Conversation engine (LLM drafts → ranker)
-                       ▲                                   │
-   Merchant dashboard ─┘                                   ▼
-                       ◀── outcomes (replies, orders) ── Messaging (SMS / iMessage / WhatsApp, simulated)
-```
-
-## Data model
-
-- `stores`, `products`, `customers` — the merchant's catalog and audience
-- `checkouts` + `checkout_items` — every checkout, its status (`completed` / `abandoned`) and its future experiment arm
-- `orders` — purchases, tagged `same_session` or `returned`
-- `experiments` — one agent run over a sample of checkouts, with status
-- `conversations` + `conversation_messages` — each chat, its transcript and outcome (kept apart from `orders` so repeated runs never double-count revenue)
-- `conversation_scores` — rule results, judge ratings and the 0-100 quality score per chat
-- `conversations.arm` (`treatment` / `holdout`) and `baseline_revenue_cents` (what the shopper would have paid with no message) power the lift estimate
-- Fields prefixed `sim_` are simulator ground truth a real store would never see
-
-Money is stored in integer cents.
+Python 3.12 · FastAPI · Jinja templates · Postgres on Neon · SQLAlchemy 2 + Alembic · Anthropic API behind `app/llm/` · Langfuse tracing (optional) · background worker with `FOR UPDATE SKIP LOCKED` · pytest + ruff in GitHub Actions · Render.
 
 ## Run locally
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+uv venv --python 3.12 && source .venv/bin/activate
+uv pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Open http://localhost:8000, pick a period and click **Simulate a new store**, then go to **Experiments** and run each agent with a holdout share. With no `DATABASE_URL`
-set, the app uses a local SQLite file. To use Postgres locally:
+Open http://localhost:8000 and click **Run the demo**, or simulate a store on **Store** and run agents on **Experiments**. Without `DATABASE_URL` the app uses a local SQLite file; `docker compose up -d` and `cp .env.example .env` switch to a local Postgres.
 
 ```bash
-docker compose up -d
-cp .env.example .env
+pytest            # 33 tests, all offline
+ruff check .
+pre-commit install   # optional: run both before every commit
 ```
 
-Run the tests:
+### Real models
 
-```bash
-pytest
-```
+Set `LLM_MODE=anthropic` and `ANTHROPIC_API_KEY`. Agents, shoppers and the judge then use Claude models. Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to trace every call.
 
 ## Deploy
 
 1. Create a free Postgres database on [Neon](https://neon.tech) and copy its connection string.
-2. On [Render](https://render.com), create a **Blueprint** from this repo (it reads `render.yaml`).
-3. Set `DATABASE_URL` to the Neon string in the Render dashboard.
+2. On [Render](https://render.com), create a **Blueprint** from this repo (it reads `render.yaml`) and set `DATABASE_URL`.
+3. Optional: uncomment the worker in `render.yaml` and set `WORKER_ENABLED=1`.
+
+Migrations run automatically on startup.
 
 ## API
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/` | Dashboard |
-| POST | `/simulate` (form: `days`, `seed`) | Generate a new simulated store |
-| GET | `/api/metrics` | Dashboard numbers as JSON |
-| GET | `/experiments` | Run agents, compare results |
+| GET | `/` | Landing page |
+| POST | `/demo` | Simulate a 180-day store and run all three agents with a 50% holdout |
+| GET | `/store` | Store dashboard |
+| POST | `/simulate` (form: `days`, `seed`) | Simulate a new store |
+| GET | `/experiments` | Run agents; leaderboard |
 | POST | `/experiments` | Start a run (`agent_key`, `sample_size`, `holdout_pct`, `guardrails`) |
-| GET | `/experiments/{id}` | One run's results and conversations |
-| GET | `/conversations/{id}` | Full transcript and outcome |
-| GET | `/api/experiments/{id}` | One run's summary as JSON (for n8n) |
+| POST | `/experiments/run-all` | Run all three agents on the latest store |
+| GET | `/experiments/{id}` | One run: chart, metrics, conversations |
+| GET | `/conversations/{id}` | Transcript, outcome and score |
+| GET | `/api/experiments/{id}` | One run's summary as JSON |
+| GET | `/api/metrics` | Store numbers as JSON |
 | GET | `/health` | Health check |
 
-## Worker
+## Data model
 
-By default the web app runs experiments itself. With a paid Render worker, set
-`WORKER_ENABLED=1` and run `python -m worker.run` as a separate service; it claims
-queued experiments safely (`SELECT … FOR UPDATE SKIP LOCKED` on Postgres).
-Locally: `python -m worker.run --once`.
+- `stores`, `products`, `customers`: the catalog and audience
+- `checkouts` + `checkout_items`: every checkout and whether it was abandoned
+- `orders`: purchases, tagged `same_session` or `returned`
+- `experiments`: one agent run, with holdout share and guardrails flag
+- `conversations` + `conversation_messages`: each chat, its arm (`treatment` / `holdout`), outcome and what the shopper would have paid with no message
+- `conversation_scores`: rule results, judge ratings and quality score
+- Fields prefixed `sim_` are ground truth a real store would never see
+
+## Roadmap
+
+| Version | What | Status |
+|---|---|---|
+| **v1: the lab** | Simulator, personas, agents, scoring, guardrails, holdout measurement, landing page, findings | ✅ |
+| **v2: real data** | Shopify connector on a development store, shadow mode (draft, score, don't send), real Claude models, n8n workflows | next |
+| **v3: a product** | Merchant login with several stores, versioned prompts, a reference conversation set, cost dashboard, scheduled experiments | later |
+
+---
+
+Thread is a portfolio project: an independent test lab, not affiliated with any company. All shopper data is simulated.

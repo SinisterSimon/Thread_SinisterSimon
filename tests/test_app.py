@@ -73,7 +73,33 @@ def test_dashboard_flow():
 
     with TestClient(app) as client:
         assert client.get("/health").json() == {"status": "ok"}
-        assert "No store data yet" in client.get("/").text
+        assert "test lab for AI sales agents" in client.get("/").text
+        assert client.get("/favicon.svg").headers["content-type"].startswith("image/svg+xml")
+        assert "No store data yet" in client.get("/store").text
         r = client.post("/simulate", data={"days": 3}, follow_redirects=True)
         assert r.status_code == 200 and "Abandoned" in r.text
         assert client.get("/api/metrics").json()["checkouts"] > 0
+
+
+def test_demo_and_run_all(monkeypatch):
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    db.engine = engine
+    db.SessionLocal.configure(bind=engine)
+    import app.main as main
+
+    monkeypatch.setattr(main, "DEMO_DAYS", 10)
+    with TestClient(main.app) as client:
+        r = client.post("/demo", follow_redirects=True)
+        assert r.status_code == 200 and "Leaderboard" in r.text
+        runs = [client.get(f"/api/experiments/{i}").json() for i in (1, 2, 3)]
+        assert [(x["agent"], x["guardrails"], x["holdout_pct"], x["status"]) for x in runs] == [
+            ("baseline-haiku", False, 50, "done"),
+            ("pushy-haiku", False, 50, "done"),
+            ("pushy-haiku", True, 50, "done"),
+        ]
+        assert all(x["estimate"] is not None for x in runs)
+
+        client.post("/experiments/run-all", data={"holdout_pct": 20})
+        assert client.get("/api/experiments/6").json()["holdout_pct"] == 20
