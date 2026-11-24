@@ -5,6 +5,7 @@ import threading
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -18,7 +19,8 @@ from app.db import SessionLocal, get_session, init_db
 from app.experiments import create_experiment, run_experiment, summarize
 from app.llm import get_llm
 from app.metrics import latest_store, store_metrics
-from app.models import Conversation, Experiment
+from app.models import Checkout, CheckoutItem, CheckoutStatus, Conversation, Experiment
+from app.shopify import ShopifyError, client_from_env, sync_store
 from app.shoppers import PERSONAS
 from app.simulator import SimConfig, run_simulation
 
@@ -244,6 +246,99 @@ def conversation_detail(conv_id: int, request: Request, session: Session = Depen
     return templates.TemplateResponse(request, "conversation.html", {"c": conv})
 
 
+# --- v2: a real Shopify store, in shadow mode --------------------------------
+
+
+def _mask_email(email: str | None) -> str:
+    if not email or "@" not in email:
+        return ""
+    name, domain = email.split("@", 1)
+    return f"{name[:1]}***@{domain}"
+
+
+def _mask_phone(phone: str | None) -> str:
+    return f"•••{phone[-2:]}" if phone else ""
+
+
+templates.env.filters["mask_email"] = _mask_email
+templates.env.filters["mask_phone"] = _mask_phone
+
+
+@app.get("/shopify", response_class=HTMLResponse)
+def shopify_page(request: Request, msg: str = "", error: str = "", session: Session = Depends(get_session)):
+    client = client_from_env()
+    store = latest_store(session, source="shopify")
+    checkouts, shadows = [], []
+    if store is not None:
+        checkouts = list(
+            session.scalars(
+                select(Checkout)
+                .where(Checkout.store_id == store.id, Checkout.status == CheckoutStatus.abandoned)
+                .options(
+                    selectinload(Checkout.customer),
+                    selectinload(Checkout.items).selectinload(CheckoutItem.product),
+                )
+                .order_by(Checkout.started_at.desc())
+            )
+        )
+        shadows = list(
+            session.scalars(
+                select(Experiment)
+                .where(Experiment.store_id == store.id, Experiment.shadow)
+                .options(selectinload(Experiment.conversations).selectinload(Conversation.messages))
+                .order_by(Experiment.id.desc())
+                .limit(3)
+            )
+        )
+    by_id = {c.id: c for c in checkouts}
+    return templates.TemplateResponse(
+        request,
+        "shopify.html",
+        {
+            "connected": client is not None,
+            "domain": client.shop_domain if client else "",
+            "store": store,
+            "checkouts": checkouts,
+            "by_id": by_id,
+            "shadows": shadows,
+            "running": any(e.status.value in ("queued", "running") for e in shadows),
+            "msg": msg,
+            "error": error,
+        },
+    )
+
+
+@app.post("/shopify/sync")
+def shopify_sync(session: Session = Depends(get_session)):
+    client = client_from_env()
+    if client is None:
+        return RedirectResponse("/shopify?error=" + quote("Shopify isn't configured yet."), status_code=303)
+    try:
+        r = sync_store(session, client)
+    except ShopifyError as err:
+        return RedirectResponse("/shopify?error=" + quote(str(err)), status_code=303)
+    note = f"Synced: {r.fetched} checkouts from Shopify, {r.new_checkouts} new, {r.updated_checkouts} updated."
+    return RedirectResponse("/shopify?msg=" + quote(note), status_code=303)
+
+
+@app.post("/shopify/draft")
+def shopify_draft(
+    background: BackgroundTasks,
+    agent_key: str = Form(...),
+    guardrails: bool = Form(False),
+    session: Session = Depends(get_session),
+):
+    if agent_key not in AGENTS:
+        raise HTTPException(400, "unknown agent")
+    store = latest_store(session, source="shopify")
+    if store is None:
+        raise HTTPException(400, "sync a Shopify store first")
+    exp = create_experiment(session, store.id, agent_key, 500, guardrails=guardrails, shadow=True)
+    if not WORKER_ENABLED:
+        background.add_task(_run_in_background, exp.id)
+    return RedirectResponse("/shopify", status_code=303)
+
+
 @app.get("/api/metrics")
 def api_metrics(session: Session = Depends(get_session)) -> dict:
     store = latest_store(session)
@@ -260,6 +355,7 @@ def api_experiment(exp_id: int, session: Session = Depends(get_session)) -> dict
         "agent": exp.agent_key,
         "guardrails": exp.guardrails,
         "holdout_pct": exp.holdout_pct,
+        "shadow": exp.shadow,
         "status": exp.status.value,
         **asdict(summarize(session, exp)),
     }

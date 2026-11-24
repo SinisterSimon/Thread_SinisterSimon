@@ -24,6 +24,13 @@ services:
         sync: false
       - key: LANGFUSE_HOST
         value: https://cloud.langfuse.com
+      # v2: a Shopify development store, read-only (shadow mode). Leave empty to hide it.
+      - key: SHOPIFY_STORE
+        sync: false
+      - key: SHOPIFY_CLIENT_ID
+        sync: false
+      - key: SHOPIFY_CLIENT_SECRET
+        sync: false
       - key: PYTHON_VERSION
         value: 3.12.7
 

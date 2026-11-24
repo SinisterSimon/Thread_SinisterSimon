@@ -90,6 +90,7 @@ Optional per experiment (`app/agents/guardrails.py`). They run outside the model
 - **Guardrails outside the model.** A prompt is a request; a guardrail is a guarantee.
 - **Migrations that adopt an existing database.** The live database predates Alembic, so startup detects that and stamps the baseline before upgrading. Tests check that migrations match the models exactly.
 - **Money in integer cents.** No floating-point rounding in revenue.
+- **Real data in shadow mode first** (`app/shopify/`). Thread reads a Shopify development store's abandoned checkouts with read-only scopes, and agents draft the message they *would* send. Nothing is sent, real customers are never marked as consenting to texts, and contact details are masked on the page. Real and simulated stores never mix, because the lab's lift numbers need ground truth only a simulator has.
 
 ## Stack
 
@@ -155,9 +156,9 @@ Migrations run automatically on startup.
 | Version | What | Status |
 |---|---|---|
 | **v1: the lab** | Simulator, personas, agents, scoring, guardrails, holdout measurement, landing page, findings | ✅ |
-| **v2: real data** | Shopify connector on a development store, shadow mode (draft, score, don't send), real Claude models, n8n workflows | next |
+| **v2: real data** | Shopify connector on a development store ✅, shadow mode drafts ✅; next: scoring drafts, webhooks, real Claude models, n8n workflows | in progress |
 | **v3: a product** | Merchant login with several stores, versioned prompts, a reference conversation set, cost dashboard, scheduled experiments | later |
 
 ---
 
-Thread is a portfolio project: an independent test lab, not affiliated with any company. All shopper data is simulated.
+Thread is a portfolio project: an independent test lab, not affiliated with any company. Shopper data is simulated, except the Live store page, which reads a Shopify development store filled with test data.

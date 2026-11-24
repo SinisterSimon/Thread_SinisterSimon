@@ -49,11 +49,11 @@
 <body>
 <header>
   <h1><a href="/" style="color:inherit;text-decoration:none">{{ app_name }}</a></h1>
-  <nav><a href="/store">Store</a><a href="/experiments">Experiments</a><a href="{{ repo_url }}">Code</a></nav>
+  <nav><a href="/store">Store</a><a href="/experiments">Experiments</a><a href="/shopify">Live store</a><a href="{{ repo_url }}">Code</a></nav>
 </header>
 <main>
 {% block content %}{% endblock %}
 </main>
-<footer>Thread is a portfolio project: an independent test lab, not affiliated with any company. Shopper data is simulated.</footer>
+<footer>Thread is a portfolio project: an independent test lab, not affiliated with any company. Shopper data is simulated, except on the Live store page, which reads a Shopify development store filled with test data.</footer>
 </body>
 </html>
