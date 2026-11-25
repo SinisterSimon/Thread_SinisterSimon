@@ -22,6 +22,8 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      - key: SHOPIFY_STORE_FACTS
+        sync: false
       - key: WORKER_ENABLED
         value: "0"
       - key: JUDGE_MODEL

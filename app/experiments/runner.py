@@ -4,6 +4,7 @@ For each checkout: the agent opens, the simulated shopper replies, and they
 go back and forth for up to MAX_ROUNDS (or until the agent hands off). The
 outcome model then decides whether the shopper bought.
 """
+import os
 import random
 from dataclasses import dataclass
 from datetime import datetime
@@ -121,15 +122,38 @@ def _shadow_sample(session: Session, exp: Experiment) -> list[Checkout]:
     return list(session.scalars(stmt))
 
 
+def clean_name(name: str) -> str:
+    """"sinister" or "SINISTER" -> "Sinister". Mixed case ("McKay") is kept as typed."""
+    name = (name or "").strip()
+    if name and name != "there" and (name.islower() or name.isupper()):
+        return name.title()
+    return name or "there"
+
+
+def clean_title(title: str) -> str:
+    """Product titles read mid-sentence: "The Multi-location Snowboard" -> "Multi-location Snowboard"."""
+    title = " ".join((title or "").split())
+    return title[4:] if title.lower().startswith("the ") and len(title) > 4 else title
+
+
+def store_facts(store: Store) -> list[str]:
+    """Facts the agent may use. A real store can set its own in SHOPIFY_STORE_FACTS ("fact | fact")."""
+    custom = os.getenv("SHOPIFY_STORE_FACTS", "") if store.source == "shopify" else ""
+    facts = [f.strip() for f in custom.split("|") if f.strip()]
+    return facts or STORE_FACTS
+
+
 def _context(store: Store, checkout: Checkout) -> AgentContext:
     return AgentContext(
         store_name=store.name,
-        first_name=checkout.customer.first_name,
+        first_name=clean_name(checkout.customer.first_name),
         cart_lines=[
-            f"{i.quantity} x {i.product.title} ({_money(i.unit_price_cents, store.currency)})" for i in checkout.items
+            f"{i.quantity} x {clean_title(i.product.title)} ({_money(i.unit_price_cents, store.currency)})"
+            for i in checkout.items
         ],
         cart_total=_money(checkout.total_cents, store.currency),
-        store_facts=STORE_FACTS,
+        store_facts=store_facts(store),
+        checkout_url=checkout.recovery_url,
     )
 
 
@@ -152,6 +176,10 @@ def _draft(session: Session, exp: Experiment, checkout: Checkout, llm: LLM, stor
         fixes = 0
         if exp.guardrails and not turn.text.startswith("(No draft"):
             turn, fixes = guard.apply(turn, last_shopper_text=None, discount_already_offered=False)
+    text = turn.text
+    if checkout.recovery_url and not text.startswith("(No draft"):
+        # The link is added by Thread, never written by the model, so it can't be invented or mistyped.
+        text = f"{text} {checkout.recovery_url}"
     session.add(
         Conversation(
             experiment_id=exp.id,
@@ -164,7 +192,7 @@ def _draft(session: Session, exp: Experiment, checkout: Checkout, llm: LLM, stor
             output_tokens=turn.output_tokens,
             guardrail_fixes=fixes,
             agent_cost_micros=cost_micros(agent_model, turn.input_tokens, turn.output_tokens),
-            messages=[ConversationMessage(seq=0, sender="agent", text=turn.text)],
+            messages=[ConversationMessage(seq=0, sender="agent", text=text)],
         )
     )
 
