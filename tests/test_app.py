@@ -157,3 +157,21 @@ def test_header_shows_the_emblem_only_when_the_file_exists():
             assert '<link rel="icon" href="/static/favicon.png" type="image/png">' in page
         finally:
             env["has_logo"], env["has_favicon_png"] = saved
+
+
+def test_run_page_says_which_judge_scored_it():
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    from app import db
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    db.engine = engine
+    db.SessionLocal.configure(bind=engine)
+    import app.main as main
+
+    with TestClient(main.app) as client:
+        client.post("/simulate", data={"days": 20})
+        page = client.post("/experiments", data={"agent_key": "baseline-haiku", "sample_size": 30, "holdout_pct": 50},
+                           follow_redirects=True).text
+        assert "offline, scripted judge" in page

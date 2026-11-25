@@ -9,6 +9,7 @@
   <span class="badge {{ 'badge-primary' if e.status.value != 'done' }}">{{ e.status.value }}</span>
   {% if e.guardrails %}<span class="badge badge-success">guardrails on</span>{% endif %}
   {% if e.holdout_pct %}<span class="badge">{{ e.holdout_pct }}% holdout</span>{% endif %}
+  {% if judge %}<span class="badge" title="The model that scored these conversations">{% if judge.startswith("offline:") %}offline, scripted judge{% else %}judged by {{ judge }}{% endif %}</span>{% endif %}
 </div>
 {% if e.status.value in ("queued", "running") %}
   <div class="banner" style="margin-top:1.5rem"><span class="pulse"></span><strong>Still running.</strong>
