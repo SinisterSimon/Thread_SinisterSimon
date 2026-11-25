@@ -109,14 +109,14 @@ uvicorn app.main:app --reload
 Open http://localhost:8000 and click **Run the demo**, or simulate a store on **Store** and run agents on **Experiments**. Without `DATABASE_URL` the app uses a local SQLite file; `docker compose up -d` and `cp .env.example .env` switch to a local Postgres.
 
 ```bash
-pytest            # 66 tests, all offline
+pytest            # 76 tests, all offline
 ruff check .
 pre-commit install   # optional: run both before every commit
 ```
 
 ### Real models
 
-Set `LLM_MODE=live` (the older name `anthropic` still works) and `ANTHROPIC_API_KEY`. Agents, shoppers and the judge then use real models. Shoppers and the judge are Claude; agents can be Claude or Gemini (`GEMINI_API_KEY`, from Google AI Studio). Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to trace every call.
+Step by step, with the Gemini-judge fairness check: [docs/real-model-run.md](docs/real-model-run.md). Set `LLM_MODE=live` (the older name `anthropic` still works) and `ANTHROPIC_API_KEY`. Agents, shoppers and the judge then use real models. Shoppers and the judge are Claude; agents can be Claude or Gemini (`GEMINI_API_KEY`, from Google AI Studio). Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to trace every call.
 
 ## Deploy
 

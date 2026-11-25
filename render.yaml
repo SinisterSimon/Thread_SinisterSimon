@@ -24,6 +24,8 @@ services:
         sync: false
       - key: SHOPIFY_STORE_FACTS
         sync: false
+      - key: AUTO_DRAFT_AGENT
+        sync: false
       - key: WORKER_ENABLED
         value: "0"
       - key: JUDGE_MODEL

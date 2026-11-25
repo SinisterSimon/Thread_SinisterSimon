@@ -20,6 +20,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from app.agents import AGENTS
 from app.config import APP_NAME
 from app.db import SessionLocal, get_session, init_db
+from app.evals.draft_checks import score_draft, summarize_scores
 from app.experiments import create_experiment, run_experiment, summarize
 from app.experiments.runner import done_cache
 from app.llm import get_llm, mode_for
@@ -35,6 +36,7 @@ from app.models import (
     ExperimentStatus,
 )
 from app.shopify import ShopifyError, client_from_env, sync_store
+from app.shopify.webhooks import verify_hmac
 from app.shoppers import PERSONAS
 from app.simulator import SimConfig, run_simulation
 
@@ -469,10 +471,16 @@ def experiment_detail(exp_id: int, request: Request, page: int = 1, session: Ses
             .limit(CONVERSATIONS_PER_PAGE)
         )
     )
+    judge = session.scalar(
+        select(ConversationScore.judge_model)
+        .join(Conversation, Conversation.id == ConversationScore.conversation_id)
+        .where(Conversation.experiment_id == exp.id)
+        .limit(1)
+    )
     return templates.TemplateResponse(
         request, "experiment.html",
         {"e": exp, "s": s, "convs": convs, "page": page, "pages": pages, "total": total,
-         "first": (page - 1) * CONVERSATIONS_PER_PAGE + 1},
+         "first": (page - 1) * CONVERSATIONS_PER_PAGE + 1, "judge": judge},
     )
 
 
@@ -534,6 +542,49 @@ def _draft_runs_left(session: Session) -> int | None:
     return max(0, DRAFT_RUNS_PER_DAY - used)
 
 
+def _score_run(exp: Experiment, by_id: dict) -> dict:
+    """Rule-check every draft in a Live store run: {conversation id: DraftScore or None}."""
+    out = {}
+    for conv in exp.conversations:
+        co = by_id.get(conv.checkout_id)
+        text = conv.messages[0].text if conv.messages else ""
+        out[conv.id] = score_draft(
+            text,
+            first_name=co.customer.first_name if co else "",
+            products=[i.product.title for i in co.items] if co else [],
+            link=co.recovery_url if co else None,
+        ) if co else None
+    return out
+
+
+def _draft_scores(session: Session, store, by_id: dict, shadows: list[Experiment]):
+    """Scores for the runs on the page, and the latest finished run of every agent, for comparing models."""
+    scores, run_scores = {}, {}
+    for e in shadows:
+        scores.update(s := _score_run(e, by_id))
+        run_scores[e.id] = summarize_scores(list(s.values()))
+    by_model = []
+    if store is not None:
+        done = session.scalars(
+            select(Experiment)
+            .where(Experiment.store_id == store.id, Experiment.shadow, Experiment.status == ExperimentStatus.done)
+            .options(selectinload(Experiment.conversations).selectinload(Conversation.messages))
+            .order_by(Experiment.id.desc())
+        )
+        seen = set()
+        for e in done:
+            if (e.agent_key, e.guardrails) in seen or e.agent_key not in AGENTS:
+                continue
+            seen.add((e.agent_key, e.guardrails))
+            summary = summarize_scores(list(_score_run(e, by_id).values()))
+            if summary:
+                drafts = [c for c in e.conversations if c.agent_cost_micros]
+                cost = sum(c.agent_cost_micros for c in drafts) / len(drafts) / 1_000_000 if drafts else None
+                by_model.append({"exp": e, "label": AGENTS[e.agent_key][0], "s": summary, "cost": cost})
+        by_model.sort(key=lambda r: (-r["s"].avg_score, r["cost"] if r["cost"] is not None else 0))
+    return scores, run_scores, by_model
+
+
 @app.get("/shopify", response_class=HTMLResponse)
 def shopify_page(request: Request, msg: str = "", error: str = "", session: Session = Depends(get_session)):
     client = client_from_env()
@@ -561,6 +612,7 @@ def shopify_page(request: Request, msg: str = "", error: str = "", session: Sess
             )
         )
     by_id = {c.id: c for c in checkouts}
+    scores, run_scores, by_model = _draft_scores(session, store, by_id, shadows)
     return templates.TemplateResponse(
         request,
         "shopify.html",
@@ -574,6 +626,9 @@ def shopify_page(request: Request, msg: str = "", error: str = "", session: Sess
             "running": any(e.status.value in ("queued", "running") for e in shadows),
             "draft_mode": mode_for(shadow=True),
             "runs_left": _draft_runs_left(session),
+            "scores": scores,
+            "run_scores": run_scores,
+            "by_model": by_model,
             "msg": msg,
             "error": error,
         },
@@ -612,6 +667,58 @@ def shopify_draft(
     if not WORKER_ENABLED:
         background.add_task(_run_in_background, exp.id)
     return RedirectResponse("/shopify", status_code=303)
+
+
+# Webhook-driven sync and drafting. Shopify can send several events for one checkout within
+# seconds (create, then updates as fields are filled), so syncs and auto-drafts are spaced out.
+WEBHOOK_SYNC_GAP = timedelta(seconds=30)
+AUTO_DRAFT_GAP = timedelta(minutes=10)
+_webhook_state = {"last_sync": datetime.min, "last_draft": datetime.min}
+_webhook_lock = threading.Lock()
+
+
+def _after_webhook() -> None:
+    """Sync the store, then (if AUTO_DRAFT_AGENT is set) draft for it. Runs in the background."""
+    now = datetime.now()
+    with _webhook_lock:
+        if now - _webhook_state["last_sync"] < WEBHOOK_SYNC_GAP:
+            return
+        _webhook_state["last_sync"] = now
+    client = client_from_env()
+    if client is None:
+        return
+    with SessionLocal() as session:
+        try:
+            result = sync_store(session, client)
+        except ShopifyError:
+            log.exception("webhook sync failed")
+            return
+        agent = os.getenv("AUTO_DRAFT_AGENT", "").strip()
+        if not agent or agent not in AGENTS or result.new_checkouts == 0 or _draft_runs_left(session) == 0:
+            return
+        with _webhook_lock:
+            if now - _webhook_state["last_draft"] < AUTO_DRAFT_GAP:
+                return
+            _webhook_state["last_draft"] = now
+        exp = create_experiment(session, result.store_id, agent, DRAFT_MAX_CHECKOUTS, shadow=True,
+                                guardrails=os.getenv("AUTO_DRAFT_GUARDRAILS", "1") != "0")
+        exp_id = exp.id
+    if not WORKER_ENABLED:
+        _run_in_background(exp_id)
+
+
+@app.post("/webhooks/shopify")
+async def shopify_webhook(request: Request, background: BackgroundTasks):
+    """Shopify calls this when a checkout is created or updated. Only signed deliveries count."""
+    body = await request.body()
+    secret = os.getenv("SHOPIFY_CLIENT_SECRET", "").strip()
+    if not secret:
+        raise HTTPException(503, "webhooks need SHOPIFY_CLIENT_SECRET")
+    if not verify_hmac(body, request.headers.get("X-Shopify-Hmac-Sha256"), secret):
+        raise HTTPException(401, "bad signature")
+    # Answer at once (Shopify waits only a few seconds) and do the work afterwards.
+    background.add_task(_after_webhook)
+    return {"ok": True}
 
 
 @app.get("/api/metrics")
