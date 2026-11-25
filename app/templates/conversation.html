@@ -1,48 +1,52 @@
 {% extends "base.html" %}
 {% block title %}Conversation {{ c.id }}{% endblock %}
 {% block content %}
-<p class="label"><a href="/experiments/{{ c.experiment_id }}">Experiment #{{ c.experiment_id }}</a> / conversation {{ c.id }}</p>
-<h2 style="margin-top:0">{{ personas[c.persona_key].name if c.persona_key in personas else c.persona_key }}</h2>
-<p class="note">{{ personas[c.persona_key].description if c.persona_key in personas else "" }}</p>
+<div class="wrap page">
+<p class="crumbs"><a href="/experiments">Experiments</a> / <a href="/experiments/{{ c.experiment_id }}">run #{{ c.experiment_id }}</a> / conversation {{ c.id }}</p>
+<h1>{{ personas[c.persona_key].name if c.persona_key in personas else c.persona_key }}</h1>
+<p class="muted" style="margin:0.5rem 0 0">{{ personas[c.persona_key].description if c.persona_key in personas else "" }}</p>
 
 {% if c.arm == "holdout" %}
-<div class="callout">Holdout group: this shopper was randomly chosen to get <strong>no message</strong>, so the store can see what happens without one.
+<div class="callout" style="margin-top:1.5rem">Holdout group: this shopper was randomly chosen to get <strong>no message</strong>, so the store can see what happens without one.
 {{ "They came back and bought anyway." if c.purchased else "They did not come back." }}</div>
 {% endif %}
-<div style="max-width:640px">
+<div class="chat">
   {% for m in c.messages %}
-    <div class="msg {{ m.sender }}"><div class="label">{{ "Agent" if m.sender == "agent" else "Shopper" }}</div>{{ m.text }}</div>
+    <div class="msg {{ m.sender }}"><p class="eyebrow">{{ "Agent" if m.sender == "agent" else "Shopper" }}</p>{{ m.text }}</div>
   {% endfor %}
 </div>
 
-<h2>Outcome</h2>
-<div class="grid">
-  <div class="card"><div class="label">Bought</div><div class="value">{{ "Yes" if c.purchased else "No" }}</div>
-    {% if c.would_buy_anyway %}<div class="note">would have bought anyway</div>{% endif %}</div>
-  <div class="card"><div class="label">Revenue</div><div class="value">{{ c.revenue_cents|money }}</div></div>
-  <div class="card"><div class="label">Discount</div><div class="value">{{ c.discount_pct }}%</div></div>
-  <div class="card"><div class="label">Tokens</div><div class="value">{{ "{:,}".format(c.input_tokens + c.output_tokens) }}</div></div>
-  {% if c.guardrail_fixes %}<div class="card"><div class="label">Guardrail fixes</div><div class="value">{{ c.guardrail_fixes }}</div></div>{% endif %}
+<div class="section-head"><h2>Outcome</h2></div>
+<div class="stat-grid">
+  <div><p class="eyebrow">Bought</p><div class="value">{{ "Yes" if c.purchased else "No" }}</div>
+    {% if c.would_buy_anyway %}<p class="note">would have bought anyway</p>{% endif %}</div>
+  <div><p class="eyebrow">Revenue</p><div class="value">{{ c.revenue_cents|money }}</div></div>
+  <div><p class="eyebrow">Discount</p><div class="value {{ 't-danger' if c.discount_pct > 10 }}">{{ c.discount_pct }}%</div></div>
+  <div><p class="eyebrow">Tokens</p><div class="value">{{ "{:,}".format(c.input_tokens + c.output_tokens) }}</div></div>
+  {% if c.guardrail_fixes %}<div><p class="eyebrow">Guardrail fixes</p><div class="value t-success">{{ c.guardrail_fixes }}</div></div>{% endif %}
 </div>
 
 {% if c.score %}{% set sc = c.score %}
-<h2>Score: {{ sc.quality }} / 100</h2>
-<div class="grid">
-  <div class="card">
-    <div class="label">Rule checks</div>
+<div class="section-head"><h2>Score: <span class="num">{{ sc.quality }}</span> / 100</h2></div>
+<div class="stat-grid">
+  <div>
+    <p class="eyebrow">Rule checks</p>
+    <ul class="checks">
     {% for ok, label in [(sc.addressed_objection, "Dealt with the shopper's concern"),
                          (sc.correct_handoff, "Handed off only when needed"),
                          (sc.discount_within_policy, "Discount within policy"),
                          (sc.no_pressure, "No pressure tactics"),
                          (sc.respected_browser, "Left browsers alone")] %}
-      <div>{{ "✓" if ok else "✗" }} {{ label }}</div>
+      <li><span class="{{ 't-success' if ok else 't-danger' }}">{{ "✓" if ok else "✗" }}</span> {{ label }}</li>
     {% endfor %}
+    </ul>
   </div>
-  <div class="card">
-    <div class="label">AI judge · {{ sc.judge_model }}</div>
-    <div>Helpfulness {{ sc.helpfulness }}/5 · Accuracy {{ sc.accuracy }}/5 · Tone {{ sc.tone }}/5</div>
-    <div class="note" style="margin-top:8px">{{ sc.judge_notes }}</div>
+  <div>
+    <p class="eyebrow">AI judge · {{ sc.judge_model }}</p>
+    <p class="num" style="margin:0.75rem 0 0;font-size:0.875rem">Helpfulness {{ sc.helpfulness }}/5 · Accuracy {{ sc.accuracy }}/5 · Tone {{ sc.tone }}/5</p>
+    <p class="note" style="margin-top:0.5rem">{{ sc.judge_notes }}</p>
   </div>
 </div>
 {% endif %}
+</div>
 {% endblock %}

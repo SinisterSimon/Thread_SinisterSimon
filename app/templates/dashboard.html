@@ -2,45 +2,51 @@
 {% block title %}Store{% endblock %}
 {% block head %}{% if building %}<meta http-equiv="refresh" content="4">{% endif %}{% endblock %}
 {% block content %}
+<div class="wrap page">
 {% include "_building.html" %}
-<form method="post" action="/simulate" style="margin-bottom:16px;display:flex;gap:8px;align-items:center">
-  <select name="days"><option value="30">30 days</option><option value="90">90 days</option><option value="180">180 days</option></select>
-  <button type="submit">Simulate a new store</button>
-  <span class="note">More days = more shoppers = tighter lift estimates.</span>
-</form>
+<div class="section-head" style="margin-top:0;flex-wrap:wrap">
+  <div>
+    <p class="eyebrow">{{ m.store_name if m else "Simulated store" }}</p>
+    <h1 style="margin-top:0.5rem">Store</h1>
+  </div>
+  <form method="post" action="/simulate" style="display:flex;gap:0.5rem;align-items:center;margin:0">
+    <select name="days" style="width:auto"><option value="30">30 days</option><option value="90">90 days</option><option value="180">180 days</option></select>
+    <button type="submit">Simulate a new store</button>
+  </form>
+</div>
+<p class="note" style="margin-top:0.5rem">More days means more shoppers, which means tighter lift estimates.</p>
 
 {% if not m %}
-  <div class="empty">
+  <div class="empty" style="margin-top:1.5rem">
     <p>No store data yet.</p>
     <p>Choose a period and click <strong>Simulate a new store</strong>.</p>
   </div>
 {% else %}
-  <p class="label">{{ m.store_name }}</p>
-
-  <h2>Checkouts</h2>
-  <div class="grid">
-    <div class="card"><div class="label">Started</div><div class="value">{{ "{:,}".format(m.checkouts) }}</div></div>
-    <div class="card"><div class="label">Completed</div><div class="value">{{ "{:,}".format(m.completed) }}</div></div>
-    <div class="card"><div class="label">Abandoned</div><div class="value">{{ "{:,}".format(m.abandoned) }}</div>
-      <div class="note">{{ "%.1f"|format(m.abandonment_rate * 100) }}% of checkouts</div></div>
-    <div class="card"><div class="label">Reachable by text</div><div class="value">{{ "{:,}".format(m.reachable_abandoned) }}</div>
-      <div class="note">abandoned with phone + consent</div></div>
+  <div class="section-head"><h2>Checkouts</h2></div>
+  <div class="stat-grid">
+    <div><p class="eyebrow">Started</p><div class="value">{{ "{:,}".format(m.checkouts) }}</div></div>
+    <div><p class="eyebrow">Completed</p><div class="value">{{ "{:,}".format(m.completed) }}</div></div>
+    <div><p class="eyebrow">Abandoned</p><div class="value t-primary">{{ "{:,}".format(m.abandoned) }}</div>
+      <p class="note">{{ "%.1f"|format(m.abandonment_rate * 100) }}% of checkouts</p></div>
+    <div><p class="eyebrow">Reachable by text</p><div class="value">{{ "{:,}".format(m.reachable_abandoned) }}</div>
+      <p class="note">abandoned with phone + consent</p></div>
   </div>
 
-  <h2>Revenue</h2>
-  <div class="grid">
-    <div class="card"><div class="label">Total revenue</div><div class="value">{{ m.revenue_cents|money }}</div>
-      <div class="note">{{ "{:,}".format(m.orders) }} orders</div></div>
-    <div class="card"><div class="label">Left in abandoned checkouts</div><div class="value">{{ m.abandoned_value_cents|money }}</div></div>
-    <div class="card"><div class="label">Came back on their own</div><div class="value">{{ m.returned_revenue_cents|money }}</div>
-      <div class="note">{{ m.returned_orders }} orders, no message sent</div></div>
+  <div class="section-head"><h2>Revenue</h2></div>
+  <div class="stat-grid">
+    <div><p class="eyebrow">Total revenue</p><div class="value">{{ m.revenue_cents|money }}</div>
+      <p class="note">{{ "{:,}".format(m.orders) }} orders</p></div>
+    <div><p class="eyebrow">Left in abandoned checkouts</p><div class="value">{{ m.abandoned_value_cents|money }}</div></div>
+    <div><p class="eyebrow">Came back on their own</p><div class="value t-success">{{ m.returned_revenue_cents|money }}</div>
+      <p class="note">{{ m.returned_orders }} orders, no message sent</p></div>
   </div>
 
-  <h2>Why this matters</h2>
-  <div class="callout">
+  <div class="section-head"><h2>Why this matters</h2></div>
+  <div class="callout" style="margin-top:1.25rem">
     No recovery messages have been sent yet, but {{ m.returned_orders }} abandoned shoppers already came back
     and spent {{ m.returned_revenue_cents|money }}. A recovery tool that credits every post-message purchase
-    would claim much of that. On the Experiments page, a randomized holdout group separates real lift from sales that would have happened anyway.
+    would claim much of that. On the <a href="/experiments">Experiments</a> page, a randomized holdout group separates real lift from sales that would have happened anyway.
   </div>
 {% endif %}
+</div>
 {% endblock %}
