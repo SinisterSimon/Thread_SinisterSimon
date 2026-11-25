@@ -50,7 +50,8 @@
     <p class="note">{% if e.guardrails %}{{ s.guardrail_fixes }} messages fixed by guardrails{% else %}guardrails off{% endif %}</p></div>
 </div>
 
-<div class="section-head"><h2>Conversations</h2></div>
+<div class="section-head"><h2>Conversations</h2>
+  {% if pages > 1 %}<p class="note num" style="margin:0">{{ first }}–{{ first + convs|length - 1 }} of {{ "{:,}".format(total) }}</p>{% endif %}</div>
 <div class="table-wrap">
 <table>
   <thead><tr><th>#</th><th>Group</th><th>Shopper type</th><th>Bought</th><th>Would anyway</th><th>Discount</th><th>Handoff</th><th>Quality</th></tr></thead>
@@ -70,5 +71,12 @@
   </tbody>
 </table>
 </div>
+{% if pages > 1 %}
+<nav class="pager" aria-label="Conversation pages" style="display:flex;justify-content:space-between;align-items:center;margin-top:1rem">
+  {% if page > 1 %}<a class="btn btn-outline btn-sm" href="?page={{ page - 1 }}">← Previous</a>{% else %}<span></span>{% endif %}
+  <span class="note num">Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}<a class="btn btn-outline btn-sm" href="?page={{ page + 1 }}">Next →</a>{% else %}<span></span>{% endif %}
+</nav>
+{% endif %}
 </div>
 {% endblock %}

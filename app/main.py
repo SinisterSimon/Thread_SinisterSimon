@@ -15,15 +15,25 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
+from starlette.middleware.gzip import GZipMiddleware
 
 from app.agents import AGENTS
 from app.config import APP_NAME
 from app.db import SessionLocal, get_session, init_db
 from app.experiments import create_experiment, run_experiment, summarize
+from app.experiments.runner import done_cache
 from app.llm import get_llm, mode_for
 from app.llm.pricing import PRICES_PER_MTOK
 from app.metrics import latest_store, store_metrics
-from app.models import Checkout, CheckoutItem, CheckoutStatus, Conversation, ConversationScore, Experiment
+from app.models import (
+    Checkout,
+    CheckoutItem,
+    CheckoutStatus,
+    Conversation,
+    ConversationScore,
+    Experiment,
+    ExperimentStatus,
+)
 from app.shopify import ShopifyError, client_from_env, sync_store
 from app.shoppers import PERSONAS
 from app.simulator import SimConfig, run_simulation
@@ -55,6 +65,7 @@ MODEL_COMPARISON = (
     "baseline-gemini-flash", "baseline-gemini-argon",
 )
 MODEL_COMPARISON_CHECKOUTS = 100
+CONVERSATIONS_PER_PAGE = 50  # a run page lists conversations 50 at a time, not all ~1,600
 MODEL_COMPARISON_HOLDOUT_PCT = 50
 DEMO_DAYS = 180
 DEMO_HOLDOUT_PCT = 50
@@ -78,8 +89,20 @@ async def lifespan(_: FastAPI):
     yield
 
 
+class CachedStatic(StaticFiles):
+    """Static files (logo, tab icon) cached by browsers for a week."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=604800"
+        return response
+
+
 app = FastAPI(title=APP_NAME, lifespan=lifespan)
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# HTML compresses about 6-8x; pages are mostly repeated markup.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.mount("/static", CachedStatic(directory=STATIC_DIR), name="static")
 
 
 log = logging.getLogger("thread")
@@ -216,13 +239,19 @@ def _range_scale(rows) -> tuple[float, float]:
 
 def _ran_on_real_models(session: Session, exp: Experiment) -> bool:
     """Whether a run used real models. Offline runs leave "offline:" judge models on their scores."""
+    cache = done_cache(session, "real_models")
+    if exp.id in cache:
+        return cache[exp.id]
     judge = session.scalar(
         select(ConversationScore.judge_model)
         .join(Conversation, Conversation.id == ConversationScore.conversation_id)
         .where(Conversation.experiment_id == exp.id)
         .limit(1)
     )
-    return judge is not None and not judge.startswith("offline:")
+    real = judge is not None and not judge.startswith("offline:")
+    if exp.status.value == "done":
+        cache[exp.id] = real  # a finished run never changes
+    return real
 
 
 def _latest_done(session: Session, rows, key: str, guardrails: bool, *, real_only=False, need_holdout=True):
@@ -348,7 +377,12 @@ def _attribution_lens(session: Session) -> dict | None:
     store = latest_store(session)
     if store is None:
         return None
-    exps = list(session.scalars(select(Experiment).where(Experiment.store_id == store.id)))
+    # Only the lab agents' finished runs: the lens never needs the other experiments.
+    exps = list(session.scalars(select(Experiment).where(
+        Experiment.store_id == store.id,
+        Experiment.agent_key.in_({k for k, _ in COMPARISON}),
+        Experiment.status == ExperimentStatus.done,
+    )))
     rows = [(e, summarize(session, e)) for e in exps]
     batch = _strategy_batch(session, rows, need_holdout=False)
     if not batch:
@@ -417,20 +451,28 @@ def start_experiment(
 
 
 @app.get("/experiments/{exp_id}", response_class=HTMLResponse)
-def experiment_detail(exp_id: int, request: Request, session: Session = Depends(get_session)):
+def experiment_detail(exp_id: int, request: Request, page: int = 1, session: Session = Depends(get_session)):
     exp = session.get(Experiment, exp_id)
     if exp is None:
         raise HTTPException(404)
+    s = summarize(session, exp)
+    total = s.conversations + s.holdout_size
+    pages = max(1, -(-total // CONVERSATIONS_PER_PAGE))
+    page = min(max(page, 1), pages)
     convs = list(
         session.scalars(
             select(Conversation)
             .where(Conversation.experiment_id == exp.id)
             .options(selectinload(Conversation.score))
             .order_by(Conversation.id)
+            .offset((page - 1) * CONVERSATIONS_PER_PAGE)
+            .limit(CONVERSATIONS_PER_PAGE)
         )
     )
     return templates.TemplateResponse(
-        request, "experiment.html", {"e": exp, "s": summarize(session, exp), "convs": convs}
+        request, "experiment.html",
+        {"e": exp, "s": s, "convs": convs, "page": page, "pages": pages, "total": total,
+         "first": (page - 1) * CONVERSATIONS_PER_PAGE + 1},
     )
 
 

@@ -349,17 +349,46 @@ class ExperimentSummary:
         return self.claimed_revenue_cents / self.caused_revenue_cents
 
 
+def done_cache(session: Session, name: str) -> dict:
+    """A per-database cache for facts about finished experiments, which never change again.
+
+    Kept on the engine object, so each database (and each test's fresh database) has its own.
+    """
+    bind = session.get_bind()
+    caches = bind.__dict__.setdefault("_thread_done_caches", {})
+    return caches.setdefault(name, {})
+
+
 def summarize(session: Session, exp: Experiment) -> ExperimentSummary:
-    convs = list(
-        session.scalars(
-            select(Conversation)
-            .where(Conversation.experiment_id == exp.id)
-            .options(selectinload(Conversation.score))
+    """Totals and the lift estimate for one experiment. A finished experiment is summarized
+    once and then served from memory: loading every conversation is the slow part."""
+    done = exp.status == ExperimentStatus.done
+    cache = done_cache(session, "summaries")
+    if done and exp.id in cache:
+        return cache[exp.id]
+    summary = _summarize(session, exp)
+    if done:
+        cache[exp.id] = summary
+    return summary
+
+
+def _summarize(session: Session, exp: Experiment) -> ExperimentSummary:
+    # Plain rows of just the columns needed, not full Conversation objects: much faster for
+    # experiments with thousands of conversations.
+    rows = session.execute(
+        select(
+            Conversation.arm, Conversation.revenue_cents, Conversation.baseline_revenue_cents,
+            Conversation.purchased, Conversation.handed_off, Conversation.discount_pct,
+            Conversation.input_tokens, Conversation.output_tokens, Conversation.guardrail_fixes,
+            Conversation.agent_cost_micros, ConversationScore.quality, ConversationScore.correct_handoff,
+            ConversationScore.discount_within_policy, ConversationScore.no_pressure,
         )
-    )
-    treated = [c for c in convs if c.arm == "treatment"]
-    held = [c for c in convs if c.arm == "holdout"]
-    scores = [c.score for c in treated if c.score is not None]
+        .outerjoin(ConversationScore, ConversationScore.conversation_id == Conversation.id)
+        .where(Conversation.experiment_id == exp.id)
+    ).all()
+    treated = [r for r in rows if r.arm == "treatment"]
+    held = [r for r in rows if r.arm == "holdout"]
+    scores = [r for r in treated if r.quality is not None]
     claimed = sum(x.revenue_cents for x in treated)
     anyway = sum(x.baseline_revenue_cents for x in treated)
     estimate = estimate_lift(
