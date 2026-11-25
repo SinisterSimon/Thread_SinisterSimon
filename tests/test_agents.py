@@ -194,3 +194,12 @@ def test_a_model_that_rejects_disabled_thinking_is_retried_and_remembered():
     assert [c["thinking"]["type"] for c in fake.calls] == ["disabled", "adaptive"]
     llm.complete(system="s", messages=[Message("user", "go")], model="claude-new-7")
     assert fake.calls[-1]["thinking"]["type"] == "adaptive" and len(fake.calls) == 3  # no second failed try
+
+
+def test_a_judge_from_any_provider_is_read_even_inside_a_code_block():
+    """Gemini tends to wrap JSON in ```json fences; the judge reply must still be read."""
+    from app.evals.scorer import _parse
+
+    fenced = 'Here is my verdict:\n```json\n{"helpfulness": 4, "accuracy": 5, "tone": 9, "notes": "ok"}\n```'
+    assert _parse(fenced) == {"helpfulness": 4, "accuracy": 5, "tone": 5, "notes": "ok"}
+    assert _parse("no json here") is None

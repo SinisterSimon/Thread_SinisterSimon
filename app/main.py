@@ -470,10 +470,16 @@ def experiment_detail(exp_id: int, request: Request, page: int = 1, session: Ses
             .limit(CONVERSATIONS_PER_PAGE)
         )
     )
+    judge = session.scalar(
+        select(ConversationScore.judge_model)
+        .join(Conversation, Conversation.id == ConversationScore.conversation_id)
+        .where(Conversation.experiment_id == exp.id)
+        .limit(1)
+    )
     return templates.TemplateResponse(
         request, "experiment.html",
         {"e": exp, "s": s, "convs": convs, "page": page, "pages": pages, "total": total,
-         "first": (page - 1) * CONVERSATIONS_PER_PAGE + 1},
+         "first": (page - 1) * CONVERSATIONS_PER_PAGE + 1, "judge": judge},
     )
 
 
