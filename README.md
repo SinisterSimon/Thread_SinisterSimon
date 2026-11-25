@@ -21,6 +21,13 @@ Five simulated 180-day stores, 50% holdout, offline mode ([full report](docs/fin
 - **Guardrails make an agent safe, not good.** On the pushy agent they cut policy breaks to zero and doubled quality scores, but real lift fell further in every store.
 - **Small stores can't measure small effects.** With 273 textable shoppers, a store couldn't tell whether the pushy agent helped at all.
 
+**Eight real models, same 100 shoppers** (Claude, GPT; [details](docs/findings.md#real-models-november-2026)), about $3.60 in total:
+
+- **The priciest model doesn't win.** Sonnet: best quality (97.4) and zero policy breaks, at a quarter of Fable's price.
+- **Cheap models are close but break more rules.** Haiku hit 92.8 quality for 1/20th of Sonnet's price, but broke policy 8 times in 47 conversations; GPT Luna, same price, once.
+- **Lift can't separate models; quality and breaks can.** Every model reached the same true lift ($574–$590): lift measures the strategy, the judge measures the craft.
+- **The prompt mattered more than the model.** The same Fable model went from a draft score of 62 to 100 after better rules, clean names and the checkout link.
+
 | Leaderboard | One experiment |
 |---|---|
 | ![Leaderboard](docs/screenshots/leaderboard.png) | ![Experiment](docs/screenshots/experiment.png) |
@@ -158,7 +165,7 @@ Migrations run automatically on startup.
 | Version | What | Status |
 |---|---|---|
 | **v1: the lab** | Simulator, personas, agents, scoring, guardrails, holdout measurement, landing page, findings | ✅ |
-| **v2: real data** | Shopify connector on a development store ✅, shadow mode drafts ✅; next: scoring drafts, webhooks, real Claude models, n8n workflows | in progress |
+| **v2: real data** | Shopify connector ✅, shadow-mode drafts ✅, real models from Anthropic, Google and OpenAI ✅, draft scoring ✅, signed webhooks + bot shoppers ✅, safe sending (allowlist, STOP, cap) ✅, real 8-model comparison ✅ | ✅ |
 | **v3: a product** | Merchant login with several stores, versioned prompts, a reference conversation set, cost dashboard, scheduled experiments | later |
 
 ---

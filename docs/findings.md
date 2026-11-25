@@ -54,10 +54,64 @@ The baseline scored 100 on quality with zero policy breaks in every store; offli
 4. **Guardrails make an agent safe, not good.** They removed every policy break and roughly doubled quality scores, but real lift fell further in all five stores. Stripping pressure and repeat discounts left messages that still didn't address anyone's concern.
 5. **Small stores can't measure small effects.** On a 30-day store (273 textable shoppers), the pushy agent's 95% range ran from −$884 to $1,573: a store that size could not tell whether its messages helped at all. Sample size, not cleverness, sets what can be known.
 
+## Real models (November 2026)
+
+The same baseline prompt on eight real models from three providers, one store, the **same
+100 shoppers** each time (47 messaged, 53 held out). Shoppers were played by Claude Haiku and
+every conversation was judged by Claude Sonnet. Runs #38–#47, `LLM_MODE=live`.
+
+| Model | Provider | List price / 1M in · out | Quality | Policy breaks (of 47) | True lift |
+|---|---|---|---|---|---|
+| **Sonnet 5.5** | Anthropic | $2 / $10 | **97.4** | **0** | $590 |
+| Fable 5.2 | Anthropic | $8 / $40 | 96.1 | 3 | $590 |
+| Opus 5.5 | Anthropic | $4 / $20 | 95.5 | 2 | $574 |
+| GPT-6.2 Sol | OpenAI | $2 / $10 | 93.8 | **0** | $590 |
+| Haiku 5.5 | Anthropic | $0.10 / $0.50 | 92.8 | 8 | $590 |
+| GPT-6.2 Astra | OpenAI | $8 / $40 | 92.8 | 2 | $574 |
+| GPT-6 Luna | OpenAI | $0.10 / $0.50 | 91.5 | 1 | $590 |
+| GPT-6.1 Terra | OpenAI | $1 / $5 | 90.9 | 4 | $590 |
+| Gemini Flash / Argon | Google | — | not measured | — | — |
+
+Gemini Flash failed on Google's side (503 "busy" after retries, free tier); Argon needs billing.
+
+**Total cost of the whole run: about $3.60** (Anthropic ~$2.85 including a few earlier drafts,
+OpenAI $0.74 for 450 requests, Google $0). Shoppers and judge are included; the agent's own share
+is a fraction of that.
+
+### What the real run shows
+
+1. **The priciest model doesn't win.** Sonnet had the best quality and zero policy breaks at a
+   quarter of Fable's price. Fable and Opus scored slightly lower and broke policy 2–3 times.
+2. **Cheap models are close, but break more rules.** Haiku reached 92.8 quality for 1/20th of
+   Sonnet's price, but broke policy 8 times in 47 conversations. At the same price, GPT Luna broke
+   policy once. For a business, *breaks* (discounts given out of policy, missed handoffs) are the
+   costly part, not a few quality points.
+3. **Lift can't separate these models; quality and breaks can.** True lift was $574–$590 for every
+   model. In the simulator a shopper buys when the agent addresses their concern and makes the
+   right call (discount, handoff), and every capable model cleared that bar in the same
+   conversations. The lab measures *strategy* with lift (baseline vs pushy: 66–76% apart) and
+   *craft* with the judge. Telling those apart is the point.
+4. **The prompt mattered more than the model.** On the Live store, the same Fable model went from
+   a draft score of **62 to 100** after the opening-message rules, clean names and the checkout link
+   were added (run #28 → #29): from "Hi sinister, this is the team at thread-dev. We noticed…" to
+   "Hi Sinister, your Multi-location Snowboard is still saved at Thread Snow Co. Ships within 1
+   business day, with tracking." plus the link.
+
+### Caveats for the real run
+
+- **One store, 47 messaged shoppers per model.** Quality differences of 1–2 points are within noise;
+  the break counts and the Sonnet vs Haiku gap are the robust signals.
+- **A Claude judge scored every model**, including the GPT ones. A Claude judge might favour
+  Claude-style replies; rerunning with `JUDGE_MODEL=gemini-…` is the check
+  ([docs/real-model-run.md](real-model-run.md)).
+- **The keyword-based outcome check is easy for any capable model**, which is why lift ties.
+  A harder outcome model (e.g. one that reads tone or penalises length) would be needed for lift to
+  rank models.
+
 ## Limitations
 
 - **Simulated shoppers.** Personas, purchase probabilities and the 15% natural return rate are assumptions (`app/shoppers/`, `app/simulator.py`). The point is not the exact numbers but that the measurement method finds whatever the truth is.
-- **Scripted agents in offline mode.** Real models will be less perfect than the baseline script and less consistent than the pushy one.
+- **Scripted agents in offline mode.** The five-store results above use scripted agents; the real-model section uses real models on one store.
 - **The outcome model rewards keywords** that show an objection was addressed. A real shopper responds to meaning, not keywords; with real models the AI judge's ratings carry more weight.
 - **One holdout per experiment.** Repeated looks at the same experiment, or many experiments chosen after the fact, would need corrections this lab doesn't yet apply.
 
