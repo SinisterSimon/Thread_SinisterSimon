@@ -68,12 +68,38 @@
     </form>
     {% endif %}
 
+    {% if by_model %}
+    <div class="section-head"><h2>Draft scores by model</h2></div>
+    <p class="note" style="margin:0.5rem 0 0;max-width:46rem">Latest finished run of each agent, scored by rules, not a model:
+      short (≤120 chars before the link), the real checkout link, first name, the product, no filler, no pressure,
+      no discount, no emoji. Free and the same every time.</p>
+    <div class="table-wrap">
+    <table style="min-width:640px">
+      <thead><tr style="white-space:nowrap"><th>Agent</th><th>Score</th><th>Avg length</th><th>SMS</th><th>Cost / draft</th><th>Run</th></tr></thead>
+      <tbody>
+      {% for r in by_model %}
+      <tr>
+        <td>{{ r.label }}{% if r.exp.guardrails %} <span class="badge badge-success">guardrails</span>{% endif %}</td>
+        <td class="num {{ 't-success' if r.s.avg_score >= 90 else ('t-danger' if r.s.avg_score < 60 else '') }}" style="font-weight:600">{{ r.s.avg_score }}</td>
+        <td class="num muted">{{ r.s.avg_chars }} chars</td>
+        <td class="num muted">{{ r.s.avg_segments }}</td>
+        <td class="num muted">{{ r.cost|usd_small if r.cost is not none else "–" }}</td>
+        <td class="num note">#{{ r.exp.id }} · {{ r.s.drafts }} draft{{ "" if r.s.drafts == 1 else "s" }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endif %}
+
     {% for e in shadows %}
       <div class="card" style="margin-top:1rem">
         <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
           <h3>{{ agents[e.agent_key][0] }}</h3>
           {% if e.guardrails %}<span class="badge badge-success">guardrails</span>{% endif %}
           <span class="badge {{ 'badge-primary' if e.status.value != 'done' }}">{{ e.status.value }}</span>
+          {% set rs = run_scores.get(e.id) %}
+          {% if rs %}<span class="badge {{ 'badge-success' if rs.avg_score >= 90 }}">score <span class="num">{{ rs.avg_score }}</span></span>{% endif %}
           {% set run_cost = e.conversations|sum(attribute="agent_cost_micros") %}
           <span class="num note" style="margin-left:auto">{% if run_cost %}{{ (run_cost / 1000000)|usd_small }} · {% endif %}run #{{ e.id }}</span>
         </div>
@@ -89,6 +115,11 @@
               {% if conv.handed_off %} · hands off to a human{% endif %}
               {% if conv.agent_cost_micros %} · <span class="num">{{ (conv.agent_cost_micros / 1000000)|usd_small }}</span>{% endif %}</p>
             <div class="msg agent" style="max-width:100%;margin:0">{{ conv.messages[0].text if conv.messages else "" }}</div>
+            {% set sc = scores.get(conv.id) %}
+            {% if sc %}<p class="note" style="margin:0.4rem 0 0">
+              <span class="num">{{ sc.score }}</span>/100 · <span class="num">{{ sc.body_chars }}</span> chars · <span class="num">{{ sc.segments }}</span> SMS
+              {% for c in sc.failed %} · <span class="t-danger">✗ {{ c.name }}{% if c.detail %} {{ c.detail }}{% endif %}</span>{% endfor %}
+              {% if not sc.failed %} · <span class="t-success">✓ all checks</span>{% endif %}</p>{% endif %}
           </div>
         {% endfor %}
       </div>

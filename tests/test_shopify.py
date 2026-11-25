@@ -269,3 +269,20 @@ def test_opening_rules_and_link_note_reach_the_model():
                        checkout_url="https://x/recover")
     assert "Thread adds it after your first text" in _context_block(ctx)
     assert "Checkout link" not in _context_block(AgentContext("S", "A", [], "$0"))
+
+
+def test_live_store_page_scores_every_draft_and_compares_agents(monkeypatch):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    db.engine = engine
+    db.SessionLocal.configure(bind=engine)
+    import app.main as main
+
+    monkeypatch.setattr(main, "client_from_env", lambda: fake_shopify()[0])
+    with TestClient(main.app) as client:
+        client.post("/shopify/sync")
+        client.post("/shopify/draft", data={"agent_key": "baseline-haiku"})
+        page = client.post("/shopify/draft", data={"agent_key": "pushy-haiku"}, follow_redirects=True).text
+    table = page.split("Draft scores by model", 1)[1].split("</table>", 1)[0]
+    # The baseline follows the rules; the pushy agent's "20% off ... expire!" fails them.
+    assert table.index("Baseline · Haiku") < table.index("Pushy discounter · Haiku")
+    assert "✓ all checks" in page and "✗ no pressure" in page and "✗ no discount" in page
