@@ -160,3 +160,37 @@ def test_real_model_never_returns_an_empty_or_cut_off_message():
     ]:
         with pytest.raises(LLMError, match=why):
             _real_llm(_FakeAnthropic(text, stop)).complete(system="s", messages=[Message("user", "go")], model="m")
+
+
+def test_opus_and_fable_use_adaptive_thinking_at_low_effort():
+    from app.llm import Message
+
+    fake = _FakeAnthropic("Hi Winnie, your snowboard is still in your cart.")
+    llm = _real_llm(fake)
+    for model in ("claude-opus-5-5", "claude-fable-5-2"):
+        llm.complete(system="s", messages=[Message("user", "go")], model=model)
+        sent = fake.calls[-1]
+        assert sent["thinking"] == {"type": "adaptive"}
+        assert sent["extra_body"] == {"output_config": {"effort": "low"}} and sent["max_tokens"] >= 4096
+    llm.complete(system="s", messages=[Message("user", "go")], model="claude-haiku-5-5")
+    assert fake.calls[-1]["thinking"] == {"type": "disabled"}
+
+
+def test_a_model_that_rejects_disabled_thinking_is_retried_and_remembered():
+    from app.llm import Message
+
+    fake = _FakeAnthropic("Hello there, your cart is saved.")
+    ok = fake._create
+
+    def picky(**kwargs):
+        fake.calls.append(kwargs)
+        if kwargs["thinking"] == {"type": "disabled"}:
+            raise RuntimeError('Error code: 400 - "thinking.type.disabled" is not supported for this model.')
+        return ok.__wrapped__(**kwargs) if hasattr(ok, "__wrapped__") else fake._resp
+
+    fake.messages.create = picky
+    llm = _real_llm(fake)
+    assert llm.complete(system="s", messages=[Message("user", "go")], model="claude-new-7").text.startswith("Hello")
+    assert [c["thinking"]["type"] for c in fake.calls] == ["disabled", "adaptive"]
+    llm.complete(system="s", messages=[Message("user", "go")], model="claude-new-7")
+    assert fake.calls[-1]["thinking"]["type"] == "adaptive" and len(fake.calls) == 3  # no second failed try
