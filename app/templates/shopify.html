@@ -92,6 +92,19 @@
     </div>
     {% endif %}
 
+    {% if sent %}
+    <div class="section-head"><h2>Send log</h2></div>
+    <p class="note" style="margin:0.5rem 0 0">Only to numbers on <code>SEND_ALLOWLIST</code>, never to a number that replied STOP,
+      at most <code>SEND_PER_DAY</code> a day. {{ "Twilio sends for real." if send_mode == "twilio" else "Console mode: nothing leaves Thread." }}</p>
+    <div class="table-wrap"><table style="min-width:560px">
+      <thead><tr><th>When</th><th>To</th><th>Status</th><th>Detail</th></tr></thead>
+      <tbody>{% for m in sent %}
+        <tr><td class="num note">{{ m.created_at.strftime("%d %b %H:%M") }}</td><td class="num">{{ m.to_number|mask_phone }}</td>
+          <td><span class="badge {{ 'badge-success' if m.status == 'sent' else ('badge-primary' if m.status in ('blocked', 'failed') else '') }}">{{ m.status }}</span></td>
+          <td class="note">{{ m.detail }}</td></tr>{% endfor %}
+      </tbody></table></div>
+    {% endif %}
+
     {% for e in shadows %}
       <div class="card" style="margin-top:1rem">
         <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
@@ -120,6 +133,10 @@
               <span class="num">{{ sc.score }}</span>/100 · <span class="num">{{ sc.body_chars }}</span> chars · <span class="num">{{ sc.segments }}</span> SMS
               {% for c in sc.failed %} · <span class="t-danger">✗ {{ c.name }}{% if c.detail %} {{ c.detail }}{% endif %}</span>{% endfor %}
               {% if not sc.failed %} · <span class="t-success">✓ all checks</span>{% endif %}</p>{% endif %}
+            {% if send_to and conv.messages and not conv.messages[0].text.startswith("(No draft") %}
+            <form method="post" action="/shopify/send-test/{{ conv.id }}" style="margin:0.5rem 0 0">
+              <button type="submit" class="btn-outline btn-sm">{{ "Send to my phone" if send_mode == "twilio" else "Log a test send" }} ({{ send_to|mask_phone }})</button>
+            </form>{% endif %}
           </div>
         {% endfor %}
       </div>

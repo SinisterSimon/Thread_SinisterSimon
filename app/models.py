@@ -266,3 +266,31 @@ class ConversationScore(Base):
     quality: Mapped[int] = mapped_column(Integer)  # 0-100
 
     conversation: Mapped[Conversation] = relationship(back_populates="score")
+
+
+class SentMessage(Base):
+    """Every attempt to send a real message, including blocked ones, so sending is auditable.
+
+    status: "sent" (handed to the carrier), "logged" (console mode, nothing left Thread),
+    "blocked" (not on the allowlist, opted out or over the daily cap), "failed" (carrier error).
+    """
+
+    __tablename__ = "sent_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[int | None] = mapped_column(ForeignKey("conversations.id"), nullable=True, index=True)
+    to_number: Mapped[str] = mapped_column(String(20), index=True)
+    body: Mapped[str] = mapped_column(String(1600))
+    channel: Mapped[str] = mapped_column(String(20))  # "console" or "twilio"
+    status: Mapped[str] = mapped_column(String(10), index=True)
+    detail: Mapped[str] = mapped_column(String(300), default="")  # carrier id, or why it was blocked
+    created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
+class OptOut(Base):
+    """A number that replied STOP. Nothing is ever sent to it again unless it replies START."""
+
+    __tablename__ = "opt_outs"
+
+    number: Mapped[str] = mapped_column(String(20), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
