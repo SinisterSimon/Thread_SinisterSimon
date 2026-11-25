@@ -286,3 +286,68 @@ def test_live_store_page_scores_every_draft_and_compares_agents(monkeypatch):
     # The baseline follows the rules; the pushy agent's "20% off ... expire!" fails them.
     assert table.index("Baseline · Haiku") < table.index("Pushy discounter · Haiku")
     assert "✓ all checks" in page and "✗ no pressure" in page and "✗ no discount" in page
+
+
+def _signed(body: bytes, secret: str = "shh") -> dict:
+    import base64
+    import hashlib
+    import hmac
+
+    sig = base64.b64encode(hmac.new(secret.encode(), body, hashlib.sha256).digest()).decode()
+    return {"X-Shopify-Hmac-Sha256": sig, "Content-Type": "application/json"}
+
+
+def test_webhook_rejects_unsigned_events_and_syncs_then_drafts_on_signed_ones(monkeypatch):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    db.engine = engine
+    db.SessionLocal.configure(bind=engine)
+    from datetime import datetime
+
+    import app.main as main
+
+    monkeypatch.setenv("SHOPIFY_CLIENT_SECRET", "shh")
+    monkeypatch.setenv("AUTO_DRAFT_AGENT", "baseline-haiku")
+    monkeypatch.setattr(main, "client_from_env", lambda: fake_shopify()[0])
+    main._webhook_state.update(last_sync=datetime.min, last_draft=datetime.min)
+    body = b'{"id": 1}'
+    with TestClient(main.app) as client:
+        def post(content, headers):
+            return client.post("/webhooks/shopify", content=content, headers=headers).status_code
+
+        assert post(body, {"X-Shopify-Hmac-Sha256": "forged"}) == 401
+        assert post(b'{"id": 2}', _signed(body)) == 401  # signature for a different body
+        assert post(body, _signed(body)) == 200
+        page = client.get("/shopify").text
+        assert "Abandoned checkouts (3)" in page and "Baseline · Haiku" in page  # synced, then drafted
+        # A burst of events within seconds doesn't sync or draft again.
+        client.post("/webhooks/shopify", content=body, headers=_signed(body))
+        assert client.get("/api/experiments/2").status_code == 404
+
+
+def test_register_subscribes_both_checkout_topics_once():
+    from app.shopify.webhooks import register
+
+    calls = []
+
+    class Stub:
+        def graphql(self, query, variables=None):
+            calls.append(variables)
+            if "webhookSubscriptions" in query:
+                return {"webhookSubscriptions": {"nodes": [
+                    {"id": "1", "topic": "CHECKOUTS_CREATE", "uri": "https://t.example/webhooks/shopify"}]}}
+            return {"webhookSubscriptionCreate": {"webhookSubscription": {"id": "2"}, "userErrors": []}}
+
+    report = register(Stub(), "https://t.example/webhooks/shopify")
+    assert report == ["CHECKOUTS_CREATE: already subscribed", "CHECKOUTS_UPDATE: subscribed"]
+    uri = "https://t.example/webhooks/shopify"
+    assert calls[-1] == {"topic": "CHECKOUTS_UPDATE", "sub": {"uri": uri, "format": "JSON"}}
+
+
+def test_bots_refuse_anything_but_a_dev_store(monkeypatch, capsys):
+    import sys
+
+    from bots import abandon_cart
+
+    monkeypatch.setattr(sys, "argv", ["abandon_cart", "--store", "www.realshop.com"])
+    assert abandon_cart.main() == 2
+    assert "only run against a development store" in capsys.readouterr().out

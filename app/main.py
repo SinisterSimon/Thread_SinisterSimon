@@ -36,6 +36,7 @@ from app.models import (
     ExperimentStatus,
 )
 from app.shopify import ShopifyError, client_from_env, sync_store
+from app.shopify.webhooks import verify_hmac
 from app.shoppers import PERSONAS
 from app.simulator import SimConfig, run_simulation
 
@@ -666,6 +667,58 @@ def shopify_draft(
     if not WORKER_ENABLED:
         background.add_task(_run_in_background, exp.id)
     return RedirectResponse("/shopify", status_code=303)
+
+
+# Webhook-driven sync and drafting. Shopify can send several events for one checkout within
+# seconds (create, then updates as fields are filled), so syncs and auto-drafts are spaced out.
+WEBHOOK_SYNC_GAP = timedelta(seconds=30)
+AUTO_DRAFT_GAP = timedelta(minutes=10)
+_webhook_state = {"last_sync": datetime.min, "last_draft": datetime.min}
+_webhook_lock = threading.Lock()
+
+
+def _after_webhook() -> None:
+    """Sync the store, then (if AUTO_DRAFT_AGENT is set) draft for it. Runs in the background."""
+    now = datetime.now()
+    with _webhook_lock:
+        if now - _webhook_state["last_sync"] < WEBHOOK_SYNC_GAP:
+            return
+        _webhook_state["last_sync"] = now
+    client = client_from_env()
+    if client is None:
+        return
+    with SessionLocal() as session:
+        try:
+            result = sync_store(session, client)
+        except ShopifyError:
+            log.exception("webhook sync failed")
+            return
+        agent = os.getenv("AUTO_DRAFT_AGENT", "").strip()
+        if not agent or agent not in AGENTS or result.new_checkouts == 0 or _draft_runs_left(session) == 0:
+            return
+        with _webhook_lock:
+            if now - _webhook_state["last_draft"] < AUTO_DRAFT_GAP:
+                return
+            _webhook_state["last_draft"] = now
+        exp = create_experiment(session, result.store_id, agent, DRAFT_MAX_CHECKOUTS, shadow=True,
+                                guardrails=os.getenv("AUTO_DRAFT_GUARDRAILS", "1") != "0")
+        exp_id = exp.id
+    if not WORKER_ENABLED:
+        _run_in_background(exp_id)
+
+
+@app.post("/webhooks/shopify")
+async def shopify_webhook(request: Request, background: BackgroundTasks):
+    """Shopify calls this when a checkout is created or updated. Only signed deliveries count."""
+    body = await request.body()
+    secret = os.getenv("SHOPIFY_CLIENT_SECRET", "").strip()
+    if not secret:
+        raise HTTPException(503, "webhooks need SHOPIFY_CLIENT_SECRET")
+    if not verify_hmac(body, request.headers.get("X-Shopify-Hmac-Sha256"), secret):
+        raise HTTPException(401, "bad signature")
+    # Answer at once (Shopify waits only a few seconds) and do the work afterwards.
+    background.add_task(_after_webhook)
+    return {"ok": True}
 
 
 @app.get("/api/metrics")
