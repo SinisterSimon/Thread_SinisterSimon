@@ -34,7 +34,7 @@ def test_lift_per_dollar():
     assert s.lift_per_dollar is None
 
 
-def test_compare_models_runs_one_prompt_on_six_models_on_the_same_shoppers():
+def test_compare_models_runs_one_prompt_on_every_model_on_the_same_shoppers():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     db.engine = engine
     db.SessionLocal.configure(bind=engine)
@@ -43,7 +43,7 @@ def test_compare_models_runs_one_prompt_on_six_models_on_the_same_shoppers():
     with TestClient(main.app) as client:
         client.post("/simulate", data={"days": 20})
         page = client.post("/experiments/compare-models", follow_redirects=True).text
-        assert "Compare 6 models" in page and "Lift / $1" in page and "Price /1M in·out" in page
+        assert "Compare 10 models" in page and "Lift / $1" in page and "Price /1M in·out" in page
 
         with db.SessionLocal() as session:
             exps = session.scalars(select(Experiment).order_by(Experiment.id)).all()
@@ -61,6 +61,11 @@ def test_compare_models_runs_one_prompt_on_six_models_on_the_same_shoppers():
             assert 0 < cost["baseline-haiku"] < cost["baseline-gemini-flash"] < cost["baseline-sonnet"]
             assert cost["baseline-sonnet"] < cost["baseline-opus"] < cost["baseline-fable"]
             assert cost["baseline-gemini-argon"] == cost["baseline-opus"]  # same list price from Dec 1
+            # One GPT model per Claude price tier.
+            assert cost["baseline-gpt-luna"] == cost["baseline-haiku"]
+            assert cost["baseline-gpt-sol"] == cost["baseline-sonnet"]
+            assert cost["baseline-gpt-astra"] == cost["baseline-fable"]
+            assert cost["baseline-gemini-flash"] < cost["baseline-gpt-terra"] < cost["baseline-sonnet"]
             held = session.scalars(select(Conversation).where(Conversation.arm == "holdout")).all()
             assert held and all(c.agent_cost_micros == 0 for c in held)  # no message, no cost
 
@@ -79,15 +84,16 @@ def test_model_table_shows_prices_and_never_scores_a_model_from_offline_runs():
         client.post("/simulate", data={"days": 20})
         table = model_table(client.post("/experiments/compare-models", follow_redirects=True).text)
         # Cheapest first, list prices per 1M tokens (input / output).
-        names = ["Haiku", "Gemini Flash", "Sonnet", "Opus", "Gemini Argon", "Fable"]
+        names = ["Haiku", "GPT Luna", "Gemini Flash", "GPT Terra", "Sonnet", "GPT Sol", "Opus", "Gemini Argon",
+                 "Fable", "GPT Astra"]
         where = [table.index(f"<h3>{n}</h3>") for n in names]
         assert where == sorted(where)
-        for price in ("$0.10 / $0.50", "$0.75 / $3.75", "$2 / $10", "$4 / $20", "$8 / $40"):
+        for price in ("$0.10 / $0.50", "$0.75 / $3.75", "$1 / $5", "$2 / $10", "$4 / $20", "$8 / $40"):
             assert f'<p class="mt-price num">{price}</p>' in table
         # The strategy rows show the lab's own runs, marked offline. Offline runs never score a
-        # model: all six model rows stay "Not measured yet" (plus pushy, which has not run).
+        # model: all ten model rows stay "Not measured yet" (plus pushy, which has not run).
         assert "· offline" in table
-        assert table.count("Not measured yet") == 7
+        assert table.count("Not measured yet") == 11
 
         # A run whose judge used a real model counts as that model's measurement.
         with db.SessionLocal() as session:
@@ -101,7 +107,7 @@ def test_model_table_shows_prices_and_never_scores_a_model_from_offline_runs():
             from app.experiments.runner import done_cache
             done_cache(session, "real_models").clear()
         table = model_table(client.get("/experiments").text)
-        assert table.count("Not measured yet") == 6
+        assert table.count("Not measured yet") == 10
         assert f'href="/experiments/{sonnet_id}" style="text-decoration:none">Run {sonnet_id:02d}</a>' in table
 
 

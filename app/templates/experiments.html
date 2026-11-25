@@ -55,9 +55,9 @@
       </form>
       <form method="post" action="/experiments/compare-models" class="card">
         <p class="eyebrow">Compare models</p>
-        <p style="margin:0.75rem 0 0;font-size:0.875rem;line-height:1.6">6 models. Same prompt, same shoppers.</p>
-        <p class="note" style="margin:0.25rem 0 0">{% if lab_mode == "offline" %}Offline: scripted, so it can't score a model. Set <code>LLM_MODE=live</code>.{% else %}Real models, about $5.{% endif %}</p>
-        <button type="submit" class="btn-outline" style="margin-top:1rem;width:100%;justify-content:center">Compare 6 models →</button>
+        <p style="margin:0.75rem 0 0;font-size:0.875rem;line-height:1.6">{{ comparison_size }} models. Same prompt, same shoppers.</p>
+        <p class="note" style="margin:0.25rem 0 0">{% if lab_mode == "offline" %}Offline: scripted, so it can't score a model. Set <code>LLM_MODE=live</code>.{% else %}Real models, about $9.{% endif %}</p>
+        <button type="submit" class="btn-outline" style="margin-top:1rem;width:100%;justify-content:center">Compare {{ comparison_size }} models →</button>
       </form>
     </div>
   </div>

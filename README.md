@@ -91,12 +91,12 @@ Optional per experiment (`app/agents/guardrails.py`). They run outside the model
 - **Migrations that adopt an existing database.** The live database predates Alembic, so startup detects that and stamps the baseline before upgrading. Tests check that migrations match the models exactly.
 - **Money in integer cents.** No floating-point rounding in revenue.
 - **Real data in shadow mode first** (`app/shopify/`). Thread reads a Shopify development store's abandoned checkouts with read-only scopes, and agents draft the message they *would* send. Nothing is sent, real customers are never marked as consenting to texts, and contact details are masked on the page. Real and simulated stores never mix, because the lab's lift numbers need ground truth only a simulator has.
-- **One prompt, several providers.** Agents name a model; `app/llm/` routes `claude-*` to Anthropic and `gemini-*` to Google, so Compare models puts Claude and Gemini on the same shoppers, priced per call.
+- **One prompt, several providers.** Agents name a model; `app/llm/` routes `claude-*` to Anthropic, `gemini-*` to Google and `gpt-*` to OpenAI, so Compare models puts Claude, Gemini and GPT on the same shoppers, priced per call.
 - **Two model switches.** `LLM_MODE` drives the lab (one click can mean thousands of calls); `DRAFT_LLM_MODE` drives Live store drafts (one message per real checkout). The public site writes real model drafts, capped per day, while the lab stays offline and free.
 
 ## Stack
 
-Python 3.12 · FastAPI · Jinja templates · Postgres on Neon · SQLAlchemy 2 + Alembic · Anthropic and Gemini APIs behind `app/llm/` · Langfuse tracing (optional) · background worker with `FOR UPDATE SKIP LOCKED` · pytest + ruff in GitHub Actions · Render.
+Python 3.12 · FastAPI · Jinja templates · Postgres on Neon · SQLAlchemy 2 + Alembic · Anthropic, Gemini and OpenAI APIs behind `app/llm/` · Langfuse tracing (optional) · background worker with `FOR UPDATE SKIP LOCKED` · pytest + ruff in GitHub Actions · Render.
 
 ## Run locally
 
@@ -109,14 +109,14 @@ uvicorn app.main:app --reload
 Open http://localhost:8000 and click **Run the demo**, or simulate a store on **Store** and run agents on **Experiments**. Without `DATABASE_URL` the app uses a local SQLite file; `docker compose up -d` and `cp .env.example .env` switch to a local Postgres.
 
 ```bash
-pytest            # 76 tests, all offline
+pytest            # 79 tests, all offline
 ruff check .
 pre-commit install   # optional: run both before every commit
 ```
 
 ### Real models
 
-Step by step, with the Gemini-judge fairness check: [docs/real-model-run.md](docs/real-model-run.md). Set `LLM_MODE=live` (the older name `anthropic` still works) and `ANTHROPIC_API_KEY`. Agents, shoppers and the judge then use real models. Shoppers and the judge are Claude; agents can be Claude or Gemini (`GEMINI_API_KEY`, from Google AI Studio). Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to trace every call.
+Step by step, with the Gemini-judge fairness check: [docs/real-model-run.md](docs/real-model-run.md). Set `LLM_MODE=live` (the older name `anthropic` still works) and `ANTHROPIC_API_KEY`. Agents, shoppers and the judge then use real models. Shoppers and the judge are Claude; agents can be Claude, Gemini (`GEMINI_API_KEY`) or GPT (`OPENAI_API_KEY`). Set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` to trace every call.
 
 ## Deploy
 

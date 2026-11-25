@@ -4,7 +4,8 @@ Pick one with the LLM_MODE environment variable:
 - "offline" (default): scripted replies, no network, no cost
 - "live" (or its older name "anthropic"): real models. Each call goes to the
   provider that owns the model name: claude-* to Anthropic (ANTHROPIC_API_KEY),
-  gemini-* to Google (GEMINI_API_KEY). A key is only needed for the models used.
+  gemini-* to Google (GEMINI_API_KEY), gpt-* to OpenAI (OPENAI_API_KEY). A key is only
+  needed for the models used.
 """
 import os
 import time
@@ -234,10 +235,86 @@ def _gemini_explain(model: str, text: str) -> str:
     return f"{model} call failed: {first_line[:160]}"
 
 
+class OpenAILLM:
+    """OpenAI's GPT models through the Responses API.
+
+    Same contract as the others: one short text, or an LLMError saying why not, in plain
+    words. Reasoning effort is set low where a model supports it (a model that rejects it is
+    retried without, and remembered); reasoning tokens are billed as output and counted there.
+    """
+
+    MAX_TOKENS = 4096
+    RETRY_DELAYS = (2, 5)
+
+    def __init__(self, api_key: str):
+        from openai import OpenAI  # imported lazily so offline mode needs no SDK
+
+        self._client = OpenAI(api_key=api_key, max_retries=0)  # retries are ours, so errors stay readable
+        self._no_reasoning: set[str] = set()
+        self._sleep = time.sleep
+
+    def _create(self, model: str, system: str, messages: list[Message]):
+        args = {
+            "model": model,
+            "instructions": system,
+            "input": [{"role": m.role, "content": m.text} for m in messages],
+            "max_output_tokens": self.MAX_TOKENS,
+        }
+        retries = 0
+        while True:
+            try:
+                extra = {} if model in self._no_reasoning else {"reasoning": {"effort": "low"}}
+                return self._client.responses.create(**args, **extra)
+            except Exception as err:
+                text = str(err)
+                if "reasoning" in text.lower() and model not in self._no_reasoning:
+                    self._no_reasoning.add(model)
+                    continue
+                if retries < len(self.RETRY_DELAYS) and _openai_transient(text):
+                    self._sleep(self.RETRY_DELAYS[retries])
+                    retries += 1
+                    continue
+                raise LLMError(_openai_explain(model, text)) from err
+
+    def complete(self, *, system: str, messages: list[Message], model: str) -> LLMReply:
+        system = system.split(OfflineLLM.MARKER, 1)[0]  # never send offline scripts
+        resp = self._create(model, system, messages)
+        if resp.status == "incomplete":
+            reason = getattr(resp.incomplete_details, "reason", None) or "unknown"
+            if reason == "max_output_tokens":
+                raise LLMError(f"{model} hit the {self.MAX_TOKENS}-token limit; the reply would be cut off")
+            raise LLMError(f"{model} declined to write this message ({reason})")
+        text = (resp.output_text or "").strip()
+        if not text:
+            raise LLMError(f"{model} returned no text")
+        usage = resp.usage
+        return LLMReply(text=text, model=model, input_tokens=usage.input_tokens, output_tokens=usage.output_tokens)
+
+
+def _openai_transient(text: str) -> bool:
+    if "insufficient_quota" in text:
+        return False  # out of credit: waiting won't help
+    return any(code in text for code in ("429", "rate_limit", "500", "502", "503", "overloaded", "timeout"))
+
+
+def _openai_explain(model: str, text: str) -> str:
+    if "insufficient_quota" in text:
+        return f"{model}: the OpenAI account has no credit left; add credits at platform.openai.com"
+    if "model_not_found" in text or "does not exist" in text:
+        return f"{model} isn't available on this OpenAI key"
+    if "429" in text or "rate_limit" in text:
+        return f"{model} hit an OpenAI rate limit; try again in a minute"
+    if any(code in text for code in ("500", "502", "503", "overloaded")):
+        return f"{model} is busy at OpenAI right now; try again in a minute"
+    first_line = text.splitlines()[0] if text else "no details"
+    return f"{model} call failed: {first_line[:160]}"
+
+
 PROVIDERS = {
     # model-name prefix: (client class, env var holding its key)
     "claude-": (AnthropicLLM, "ANTHROPIC_API_KEY"),
     "gemini-": (GeminiLLM, "GEMINI_API_KEY"),
+    "gpt-": (OpenAILLM, "OPENAI_API_KEY"),
 }
 
 
