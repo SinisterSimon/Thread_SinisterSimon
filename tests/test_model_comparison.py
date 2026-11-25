@@ -97,6 +97,9 @@ def test_model_table_shows_prices_and_never_scores_a_model_from_offline_runs():
                 score.judge_model = "claude-sonnet-5-5"
             session.commit()
             sonnet_id = sonnet.id
+            # Finished runs are cached as offline/real; this test rewrites history, so forget it.
+            from app.experiments.runner import done_cache
+            done_cache(session, "real_models").clear()
         table = model_table(client.get("/experiments").text)
         assert table.count("Not measured yet") == 6
         assert f'href="/experiments/{sonnet_id}" style="text-decoration:none">Run {sonnet_id:02d}</a>' in table
