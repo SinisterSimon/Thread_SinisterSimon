@@ -1,5 +1,6 @@
 """Web app: dashboard, experiments, transcripts and a small JSON API."""
 import logging
+import math
 import os
 import threading
 from contextlib import asynccontextmanager
@@ -129,8 +130,8 @@ def favicon() -> Response:
 
 
 @app.get("/", response_class=HTMLResponse)
-def landing(request: Request):
-    return templates.TemplateResponse(request, "landing.html", {})
+def landing(request: Request, session: Session = Depends(get_session)):
+    return templates.TemplateResponse(request, "landing.html", {"lens": _attribution_lens(session)})
 
 
 @app.get("/store", response_class=HTMLResponse)
@@ -217,42 +218,142 @@ def _ran_on_real_models(session: Session, exp: Experiment) -> bool:
     return judge is not None and not judge.startswith("offline:")
 
 
+def _latest_done(session: Session, rows, key: str, guardrails: bool, *, real_only=False, need_holdout=True):
+    """The newest finished run of one agent setup, as (experiment, summary), or None."""
+    for e, s in sorted(rows, key=lambda r: r[0].id, reverse=True):
+        if e.agent_key != key or e.guardrails != guardrails or e.status.value != "done":
+            continue
+        if need_holdout and not e.holdout_pct:
+            continue
+        if real_only and not _ran_on_real_models(session, e):
+            continue
+        return e, s
+    return None
+
+
 @dataclass
-class ModelRow:
-    key: str
-    name: str  # "Sonnet", "Gemini Flash"
+class CompareRow:
+    title: str  # "Baseline", "Pushy discounter", or "" for a bare model row
+    model: str  # "Haiku", "Gemini Flash"
     price_in: float  # list price per 1M tokens (USD)
     price_out: float
-    status: str  # "measured" | "running" | "offline" (only scripted runs exist) | "none"
     experiment: Experiment | None = None
     summary: object = None
+    real: bool = False  # ran on real models (offline runs are scripted)
+    status: str = "none"  # "measured" | "running" | "none"
+
+    @property
+    def lift_per_dollar(self):
+        # Offline token counts are estimates, so a cost-based ratio only means something for real runs.
+        return self.summary.lift_per_dollar if self.summary and self.real else None
 
 
-def _model_rows(session: Session, rows) -> list[ModelRow]:
-    """One row per model in the comparison, cheapest first.
+def _price(key: str) -> tuple[float, float]:
+    return PRICES_PER_MTOK[AGENTS[key][1]]
 
-    A model counts as measured only from its latest finished run on real models,
-    without guardrails and with a holdout. Offline runs answer from one script
-    whatever the model, so their numbers belong to no model and are never shown here.
+
+def _model_name(key: str) -> str:
+    return AGENTS[key][0].split(" · ", 1)[-1]
+
+
+def _row(session: Session, title: str, key: str, found) -> CompareRow:
+    exp, summary = found or (None, None)
+    real = bool(exp) and _ran_on_real_models(session, exp)
+    return CompareRow(title, _model_name(key), *_price(key), exp, summary, real, "measured" if exp else "none")
+
+
+def _nice_ticks(lo: float, hi: float, count: int = 5) -> list[int]:
+    """Round axis ticks (cents) inside [lo, hi]; 0 is always one of them when in range."""
+    raw = (hi - lo) / count or 1
+    mag = 10 ** math.floor(math.log10(raw))
+    step = next(m * mag for m in (1, 2, 2.5, 5, 10) if m * mag >= raw)
+    first = math.ceil(lo / step) * step
+    return [round(first + i * step) for i in range(int((hi - first) // step) + 1)]
+
+
+def _axis(rows: list[CompareRow]) -> dict:
+    """A shared lift axis (cents, always including $0) for one group of rows."""
+    shown = [r for r in rows if r.summary and r.summary.estimate]
+    values = [0]
+    for r in shown:
+        est = r.summary.estimate
+        values += [est.ci_low, est.ci_high, est.total_lift]
+    lo, hi = min(values), max(values)
+    pad = (hi - lo) * 0.04 or 1
+    ticks = _nice_ticks(lo - pad, hi + pad) if shown else []
+    return {"range": (lo - pad, hi + pad), "ticks": ticks, "shown": len(shown)}
+
+
+STRATEGY_NAMES = {("baseline-haiku", False): "Baseline", ("pushy-haiku", False): "Pushy",
+                  ("pushy-haiku", True): "Pushy + guardrails"}
+
+
+def _strategy_batch(session: Session, rows, *, need_holdout: bool) -> dict:
+    """The three lab agents from one batch (same sample size and holdout), so they compare
+    like with like. Picks the batch with the most of the three agents, newest first."""
+    best: dict = {}
+    for setup in {(e.sample_size, e.holdout_pct) for e, _ in rows}:
+        same = [(e, s) for e, s in rows if (e.sample_size, e.holdout_pct) == setup]
+        found = {(k, g): f for k, g in COMPARISON
+                 if (f := _latest_done(session, same, k, g, need_holdout=need_holdout))}
+        def rank(batch):
+            return len(batch), max((e.id for e, _ in batch.values()), default=0)
+        if found and rank(found) > rank(best):
+            best = found
+    return best
+
+
+def _model_comparison(session: Session, rows) -> dict:
+    """The model comparison on the Experiments page, from stored results only, in two groups
+    that are each one batch on one axis: lift depends on how many shoppers were messaged, so
+    runs of different sizes never share an axis.
+
+    Strategies: the lab's three Haiku agents from one batch, marked when offline.
+    Models: the same baseline prompt per model, measured only from finished runs on real
+    models. Offline runs answer from one script whatever the model, so showing them as a
+    model's score would be invented.
     """
-    out = []
+    batch = _strategy_batch(session, rows, need_holdout=True)
+    baseline = _row(session, "Baseline", "baseline-haiku", batch.get(("baseline-haiku", False)))
+    pushy = _row(session, "Pushy discounter", "pushy-haiku", batch.get(("pushy-haiku", False)))
+    guarded = _row(session, "Pushy discounter", "pushy-haiku", batch.get(("pushy-haiku", True)))
+    models = []
     for key in MODEL_COMPARISON:
-        label, model = AGENTS[key][0], AGENTS[key][1]
-        price_in, price_out = PRICES_PER_MTOK[model]
-        runs = sorted(
-            ((e, s) for e, s in rows if e.agent_key == key and not e.guardrails and e.holdout_pct),
-            key=lambda r: r[0].id, reverse=True,
-        )
-        real = next(((e, s) for e, s in runs if e.status.value == "done" and _ran_on_real_models(session, e)), None)
-        if real:
-            status = "measured"
-        elif any(e.status.value in ("queued", "running") for e, _ in runs):
-            status = "running"
-        else:
-            status = "offline" if any(e.status.value == "done" for e, _ in runs) else "none"
-        out.append(ModelRow(key, label.split(" · ", 1)[-1], price_in, price_out, status, *(real or (None, None))))
-    order = list(MODEL_COMPARISON)
-    return sorted(out, key=lambda r: (r.price_in, r.price_out, order.index(r.key)))
+        row = _row(session, "", key, _latest_done(session, rows, key, False, real_only=True))
+        busy = any(e.agent_key == key and e.status.value in ("queued", "running") for e, _ in rows)
+        if row.status == "none" and busy:
+            row.status = "running"
+        models.append(row)
+    models.sort(key=lambda r: (r.price_in, r.price_out))  # stable: equal prices keep MODEL_COMPARISON order
+    strategies = _axis([baseline, pushy, guarded])
+    model_axis = _axis(models)
+    first = baseline.summary or pushy.summary or guarded.summary
+    return {
+        "baseline": baseline, "pushy": pushy, "guarded": guarded, "models": models,
+        "strategy_axis": strategies, "model_axis": model_axis,
+        "strategy_size": (first.conversations, first.holdout_size) if first else None,
+        "runs": strategies["shown"] + model_axis["shown"],
+    }
+
+
+def _attribution_lens(session: Session) -> dict | None:
+    """Claimed vs true lift for the three lab agents (one batch) on the latest simulated store."""
+    store = latest_store(session)
+    if store is None:
+        return None
+    exps = list(session.scalars(select(Experiment).where(Experiment.store_id == store.id)))
+    rows = [(e, summarize(session, e)) for e in exps]
+    batch = _strategy_batch(session, rows, need_holdout=False)
+    if not batch:
+        return None
+    agents = [{"name": STRATEGY_NAMES[k], "id": e.id, "claimed": s.claimed_revenue_cents,
+               "truth": s.caused_revenue_cents} for k, (e, s) in sorted(batch.items(), key=lambda kv: kv[1][0].id)]
+    top = max(max(a["claimed"], a["truth"]) for a in agents) or 1
+    for a in agents:
+        a["claimed_pct"] = round(max(a["claimed"], 0) / top * 100, 2)
+        a["truth_pct"] = round(max(a["truth"], 0) / top * 100, 2)
+    ids = sorted(a["id"] for a in agents)
+    return {"agents": agents, "runs": f"run {ids[0]}" if len(ids) == 1 else f"run {ids[0]}–{ids[-1]}"}
 
 
 @app.get("/experiments", response_class=HTMLResponse)
@@ -268,7 +369,7 @@ def experiments_page(request: Request, session: Session = Depends(get_session)):
         reverse=True,
     )
     reachable = store_metrics(session, store).reachable_abandoned if store else 0
-    models = _model_rows(session, rows)
+    comparison = _model_comparison(session, rows)
     return templates.TemplateResponse(
         request,
         "experiments.html",
@@ -276,8 +377,7 @@ def experiments_page(request: Request, session: Session = Depends(get_session)):
             "store": store,
             "rows": rows,
             "scale": _range_scale(rows),
-            "models": models,
-            "model_scale": _range_scale([(r.experiment, r.summary) for r in models if r.summary]),
+            "cmp": comparison,
             "worker": WORKER_ENABLED,
             "reachable": reachable,
             "building": is_building(),

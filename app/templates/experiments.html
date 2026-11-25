@@ -1,11 +1,28 @@
 {% extends "base.html" %}
 {% block title %}Experiments{% endblock %}
 {% block head %}{% if building or running %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
-{% macro pct(v, axis=none) %}{% set a = axis or scale %}{{ "%.2f"|format((v - a[0]) / (a[1] - a[0]) * 100) }}{% endmacro %}
+{% macro pct(v) %}{{ "%.2f"|format((v - scale[0]) / (scale[1] - scale[0]) * 100) }}{% endmacro %}
+{% macro pos(v, ax) %}{{ "%.2f"|format((v - ax.range[0]) / (ax.range[1] - ax.range[0]) * 100) }}{% endmacro %}
+{% macro estimate(est, ax, guarded=false) %}
+<div class="model-estimate{{ ' model-estimate-guarded guarded-only' if guarded }}" aria-hidden="true">
+  <span class="model-interval" style="left:{{ pos(est.ci_low, ax) }}%;width:{{ '%.2f'|format(pos(est.ci_high, ax)|float - pos(est.ci_low, ax)|float) }}%"></span>
+  <span class="model-point" style="left:{{ pos(est.total_lift, ax) }}%"></span>
+</div>
+{% endmacro %}
+{% macro axis_row(ax) %}{% if ax.ticks %}
+<div class="model-table model-axis-row" aria-hidden="true">
+  <span class="mt-name"></span><span class="mt-price"></span>
+  <div class="mt-plot model-plot num">{% for t in ax.ticks %}<span class="model-axis-label" style="left:{{ pos(t, ax) }}%">{{ tick_label(t) }}</span>{% endfor %}</div>
+  <span class="mt-lift"></span><span class="mt-quality"></span><span class="mt-dollar"></span>
+</div>{% endif %}{% endmacro %}
+{% macro dash() %}<span class="mt-dash num">—</span>{% endmacro %}
+{% macro run_label(r) %}Run {{ "%02d"|format(r.experiment.id) }}{% if not r.real %} · offline{% endif %}{% endmacro %}
+{% macro tick_label(v) %}{% set d = v / 100 %}{% if v == 0 %}$0{% elif d|abs >= 1000 %}{{ "−" if d < 0 }}{{ "%g"|format((d|abs) / 1000) }}k{% else %}{{ "−" if d < 0 }}${{ "%g"|format(d|abs) }}{% endif %}{% endmacro %}
 {% block content %}
 <div class="wrap page">
 {% include "_building.html" %}
-<h1>Experiments</h1>
+<p class="eyebrow">{% if store %}Simulated store · {{ "Offline report" if lab_mode == "offline" else "Real models" }}{% else %}Simulated store{% endif %}</p>
+<h1 style="margin-top:1rem;font-size:2.25rem">Experiments</h1>
 {% if not store %}
   {% if not building %}<div class="empty" style="margin-top:1.5rem"><p>Simulate a store first, then run agents against its abandoned checkouts.</p>
     <a class="btn btn-outline" href="/store">Go to Store</a></div>{% endif %}
@@ -22,86 +39,116 @@
         <label class="field">Holdout %<input type="number" name="holdout_pct" value="50" min="0" max="90"></label>
       </div>
       <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:1rem;margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid var(--border)">
-        <label class="toggle"><input type="checkbox" name="guardrails" value="true"><span class="track"></span>
-          <span class="off">Guardrails off</span><span class="on">Guardrails on</span></label>
-        <button type="submit">Start run</button>
+        <label class="toggle"><input type="checkbox" name="guardrails" value="true" aria-label="Guardrails"><span class="track"></span>Guardrails</label>
+        <button type="submit"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>Start run</button>
       </div>
-      <p class="note" style="margin:0.75rem 0 0">{{ "Queued for the worker." if worker else "Runs right away in the app." }}
-        The holdout share gets no message; that's how a real store measures lift.</p>
+      <p class="note" style="margin:0.75rem 0 0">Holdout shoppers receive no message.{{ " Queued for the worker." if worker }}</p>
     </form>
-    <form method="post" action="/experiments/run-all" class="card-ink">
-      <input type="hidden" name="holdout_pct" value="50">
-      <div>
-        <p class="eyebrow">Quick compare</p>
-        <p style="margin:0.75rem 0 0;font-size:0.875rem;line-height:1.6;opacity:.8">Baseline, pushy, and pushy with guardrails, on every textable checkout with a 50% holdout.</p>
-      </div>
-      <button type="submit" class="btn-on-ink" style="margin-top:1.5rem;justify-content:center">Run all three agents →</button>
-    </form>
-  </div>
-
-  <form method="post" action="/experiments/compare-models" class="card" style="margin-top:1rem;display:flex;gap:1.5rem;align-items:center;justify-content:space-between;flex-wrap:wrap">
-    <div style="max-width:44rem">
-      <p class="eyebrow">Compare models</p>
-      <p style="margin:0.5rem 0 0;font-size:0.9rem">The same baseline prompt on <strong>Claude Haiku, Sonnet, Opus and Fable</strong> and <strong>Gemini Flash and Argon</strong>: same shoppers, same 50% holdout.
-        Does a pricier model earn back its cost in true lift?</p>
-      <p class="note" style="margin:0.4rem 0 0">{% if lab_mode == "offline" %}Offline mode: free, but scripted, so all six models answer the same.
-        Set <code>LLM_MODE=live</code> for a real comparison.{% else %}Real models: about $5 for ~50 messaged shoppers per model, mostly Opus, Fable and Argon. Gemini rows need <code>GEMINI_API_KEY</code>.{% endif %}
-        With ~50 shoppers per model the lift ranges are wide: expect it to show costs clearly and lift differences only if they are large.</p>
+    <div style="display:grid;gap:1rem">
+      <form method="post" action="/experiments/run-all" class="card-ink">
+        <input type="hidden" name="holdout_pct" value="50">
+        <div>
+          <p class="eyebrow">Quick compare</p>
+          <p style="margin:0.75rem 0 0;font-size:0.875rem;line-height:1.6;opacity:.8">3 agents. Same shoppers. 50% holdout.</p>
+        </div>
+        <button type="submit" class="btn-on-ink" style="margin-top:1.5rem;justify-content:center">Run all three →</button>
+      </form>
+      <form method="post" action="/experiments/compare-models" class="card">
+        <p class="eyebrow">Compare models</p>
+        <p style="margin:0.75rem 0 0;font-size:0.875rem;line-height:1.6">6 models. Same prompt, same shoppers.</p>
+        <p class="note" style="margin:0.25rem 0 0">{% if lab_mode == "offline" %}Offline: scripted, so it can't score a model. Set <code>LLM_MODE=live</code>.{% else %}Real models, about $5.{% endif %}</p>
+        <button type="submit" class="btn-outline" style="margin-top:1rem;width:100%;justify-content:center">Compare 6 models →</button>
+      </form>
     </div>
-    <button type="submit" class="btn-outline">Compare 6 models →</button>
-  </form>
+  </div>
 
-  <div class="section-head">
-    <h2>Model comparison</h2>
-    <div class="legend"><span><i class="sw-band"></i>95% range</span><span><i class="sw-true"></i>true lift</span><span><i class="sw-claim"></i>claimed</span></div>
-  </div>
-  <div class="table-wrap">
-  <table style="min-width:860px">
-    <thead><tr style="white-space:nowrap"><th>Model</th><th>Price / 1M · in / out</th>
-        <th>Estimated lift (95%)</th><th>Model cost</th><th>Lift / $1</th><th>Quality</th></tr></thead>
-    <tbody>
-    {% for m in models %}
-    {% set s = m.summary %}{% set est = s.estimate if s else none %}
-    <tr>
-      <td style="min-width:11rem;max-width:15rem">
-        {% if m.experiment %}<a href="/experiments/{{ m.experiment.id }}">{{ m.name }}</a>
-          <div class="note" style="margin-top:0.25rem">run #{{ m.experiment.id }} · {{ s.conversations }} messaged / {{ s.holdout_size }} held out</div>
-        {% else %}<span>{{ m.name }}</span>
-          <div class="note" style="margin-top:0.25rem">Not measured yet{% if m.status == "running" %} · running now{% elif m.status == "offline" %}<br><span title="Offline runs answer from one script whatever the model">offline runs only</span>{% endif %}</div>
-        {% endif %}</td>
-      <td class="fig">{{ m.price_in|per_mtok }} / {{ m.price_out|per_mtok }}</td>
-      {% if s %}
-      <td style="width:280px">
-        {% if est %}
-        <div style="display:flex;align-items:baseline;gap:0.5rem">
-          <span class="fig">{{ est.total_lift|money }}</span>
-          <span class="fig note">{{ est.ci_low|money }} – {{ est.ci_high|money }}</span>
+  {# Model comparison. Haiku rows are the lab's latest runs (marked when offline); every other
+     model shows numbers only from a finished run on real models. Never a made-up score. #}
+  <section class="model-comparison show-guarded" id="model-comparison" aria-label="Model comparison">
+    <h2>Better conversations. Measured impact.</h2>
+    <p class="muted" style="margin:0.75rem 0 0;max-width:48rem;font-size:0.875rem;line-height:1.6">
+      <span class="t-primary" style="font-weight:500">Haiku</span> agents against simulated shoppers. A randomized holdout separates sales after a message from sales caused by it.</p>
+    <div class="model-bar">
+      <span class="num note" style="font-size:11px">ESTIMATED LIFT · 95% RANGE</span>
+      <label class="toggle" style="font-size:0.75rem">
+        <svg class="t-success" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+        Guarded runs
+        <input type="checkbox" id="show-guarded" checked aria-label="Show guarded runs"><span class="track"></span>
+      </label>
+    </div>
+
+    <div style="margin-top:1.25rem">
+      <div class="model-table model-head" aria-hidden="true">
+        <span class="mt-name">Model</span><span class="mt-price">Price /1M in·out</span><span class="mt-plot">Lift · 95%</span>
+        <span class="mt-lift">Lift</span><span class="mt-quality">Quality</span><span class="mt-dollar">Lift / $1</span>
+      </div>
+
+      {% set sa = cmp.strategy_axis %}{% set ma = cmp.model_axis %}
+      <div class="model-group"><span>Strategies · same batch</span>
+        {% if cmp.strategy_size %}<span class="num">{{ cmp.strategy_size[0] }} messaged / {{ cmp.strategy_size[1] }} held out per run</span>{% endif %}</div>
+      {% set b = cmp.baseline %}{% set bs = b.summary %}
+      <div class="model-table{{ ' model-row-unmeasured' if not (bs and bs.estimate) }}">
+        <div class="mt-name"><h3>Baseline · <span class="t-primary">Haiku</span></h3>
+          <p class="mt-sub num">{% if b.experiment %}<a href="/experiments/{{ b.experiment.id }}" style="text-decoration:none">{{ run_label(b) }}</a>{% else %}Not measured yet{% endif %}</p></div>
+        <p class="mt-price num">{{ b.price_in|per_mtok }} / {{ b.price_out|per_mtok }}</p>
+        <div class="mt-plot model-plot"><span class="model-zero" style="left:{{ pos(0, sa) }}%"></span>
+          {% if bs and bs.estimate %}{{ estimate(bs.estimate, sa) }}{% else %}<span class="model-empty"></span>{% endif %}</div>
+        <p class="mt-lift num{{ ' t-success' if bs and bs.estimate }}" data-label="Lift" style="font-weight:500">{{ bs.estimate.total_lift|money if bs and bs.estimate else dash() }}</p>
+        <p class="mt-quality num" data-label="Quality">{{ bs.avg_quality if bs and bs.avg_quality is not none else dash() }}</p>
+        <p class="mt-dollar num" data-label="Lift / $1">{% if b.lift_per_dollar is not none %}${{ "{:,.0f}".format(b.lift_per_dollar) }}{% else %}{{ dash() }}{% endif %}</p>
+      </div>
+
+      {% set p = cmp.pushy %}{% set ps = p.summary %}{% set g = cmp.guarded %}{% set gs = g.summary %}
+      <div class="model-table model-paired-row{{ ' model-paired-expanded' if gs and gs.estimate }}">
+        <div class="mt-name">
+          <p style="font-size:0.875rem">Pushy discounter · <span class="t-primary" style="font-weight:500">Haiku</span></p>
+          <p class="mt-sub num">{% if p.experiment %}<a href="/experiments/{{ p.experiment.id }}" style="text-decoration:none">{{ run_label(p) }}</a>{% else %}Not measured yet{% endif %}</p>
+          {% if g.experiment %}<p class="mt-sub num guarded-only" style="margin-top:0.5rem !important;display:flex;align-items:center;gap:0.25rem">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <a href="/experiments/{{ g.experiment.id }}" style="text-decoration:none">Guarded · {{ run_label(g)|lower }}</a></p>{% endif %}
         </div>
-        <div class="range" title="95% range {{ est.ci_low|money }} to {{ est.ci_high|money }}; true lift {{ s.caused_revenue_cents|money }}; claimed {{ s.claimed_revenue_cents|money }}">
-          <div class="axis"></div>
-          <div class="zero" style="left:{{ pct(0, model_scale) }}%"></div>
-          <div class="band" style="left:{{ pct(est.ci_low, model_scale) }}%;width:{{ "%.2f"|format(pct(est.ci_high, model_scale)|float - pct(est.ci_low, model_scale)|float) }}%"></div>
-          <div class="truth" style="left:{{ pct(s.caused_revenue_cents, model_scale) }}%"></div>
-          <div class="claim" style="left:{{ pct(s.claimed_revenue_cents, model_scale) }}%"></div>
-        </div>
-        {% if not est.significant %}<p class="note t-warn" style="margin:0.375rem 0 0">can't tell from $0</p>{% endif %}
-        {% else %}<span class="muted">—</span>{% endif %}
-      </td>
-      <td class="fig muted">{{ s.agent_cost_usd|usd_small if s.agent_cost_micros else "—" }}</td>
-      <td class="fig">{% if s.lift_per_dollar is not none %}${{ "{:,.0f}".format(s.lift_per_dollar) }}{% else %}<span class="muted">—</span>{% endif %}</td>
-      <td>{% if s.avg_quality is not none %}<div class="qbar"><div class="bar"><span style="width:{{ s.avg_quality }}%"></span></div><span class="fig note">{{ s.avg_quality }}</span></div>{% else %}<span class="muted">—</span>{% endif %}</td>
-      {% else %}
-      <td><span class="muted">—</span></td><td><span class="muted">—</span></td><td><span class="muted">—</span></td><td><span class="muted">—</span></td>
-      {% endif %}
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  <p class="note" style="margin-top:1rem;max-width:48rem">The same baseline prompt on each model, cheapest first. A model shows numbers only from a finished run on
-    real models: offline runs answer from one script whatever the model, so they are never counted here. Price is list price per
-    1M tokens; Gemini's output price includes thinking tokens. Lift / $1 is true lift per dollar of the agent's model cost.
-    Ranges from ~50 messaged shoppers per model are wide.</p>
+        <p class="mt-price num">{{ p.price_in|per_mtok }} / {{ p.price_out|per_mtok }}</p>
+        <div class="mt-plot model-plot"><span class="model-zero" style="left:{{ pos(0, sa) }}%"></span>
+          {% if ps and ps.estimate %}{{ estimate(ps.estimate, sa) }}{% elif not (gs and gs.estimate) %}<span class="model-empty"></span>{% endif %}
+          {% if gs and gs.estimate %}{{ estimate(gs.estimate, sa, guarded=true) }}{% endif %}</div>
+        <div class="mt-lift num" data-label="Lift"><p>{{ ps.estimate.total_lift|money if ps and ps.estimate else dash() }}</p>
+          {% if gs %}<p class="guarded-only t-primary" style="margin-top:0.75rem">{{ gs.estimate.total_lift|money if gs.estimate else dash() }}</p>{% endif %}</div>
+        <div class="mt-quality num" data-label="Quality"><p>{{ ps.avg_quality if ps and ps.avg_quality is not none else dash() }}</p>
+          {% if gs %}<p class="guarded-only t-primary" style="margin-top:0.75rem">{{ gs.avg_quality if gs.avg_quality is not none else dash() }}</p>{% endif %}</div>
+        <p class="mt-dollar num" data-label="Lift / $1">{% if p.lift_per_dollar is not none %}${{ "{:,.0f}".format(p.lift_per_dollar) }}{% else %}{{ dash() }}{% endif %}</p>
+      </div>
+
+      {{ axis_row(sa) }}
+
+      <div class="model-group" style="margin-top:1.75rem"><span>Models · same baseline prompt</span><span>real-model runs only</span></div>
+      {% for m in cmp.models %}{% set ms = m.summary %}
+      <div class="model-table{{ ' model-row-unmeasured' if not (ms and ms.estimate) }}">
+        <div class="mt-name"><h3>{{ m.model }}</h3>
+          <p class="mt-sub{{ ' num' if m.experiment }}">{% if m.experiment %}<a href="/experiments/{{ m.experiment.id }}" style="text-decoration:none">{{ run_label(m) }}</a>{% elif m.status == "running" %}Running now{% else %}Not measured yet{% endif %}</p></div>
+        <p class="mt-price num">{{ m.price_in|per_mtok }} / {{ m.price_out|per_mtok }}</p>
+        <div class="mt-plot model-plot"><span class="model-zero" style="left:{{ pos(0, ma) }}%"></span>
+          {% if ms and ms.estimate %}{{ estimate(ms.estimate, ma) }}{% else %}<span class="model-empty"></span>{% endif %}</div>
+        <p class="mt-lift num{{ ' t-success' if ms and ms.estimate }}" data-label="Lift" style="font-weight:500">{{ ms.estimate.total_lift|money if ms and ms.estimate else dash() }}</p>
+        <p class="mt-quality num" data-label="Quality">{{ ms.avg_quality if ms and ms.avg_quality is not none else dash() }}</p>
+        <p class="mt-dollar num" data-label="Lift / $1">{% if m.lift_per_dollar is not none %}${{ "{:,.0f}".format(m.lift_per_dollar) }}{% else %}{{ dash() }}{% endif %}</p>
+      </div>
+      {% endfor %}
+
+      {{ axis_row(ma) }}
+    </div>
+
+    <div class="model-foot">
+      <p class="num">{{ cmp.runs }} run{{ "" if cmp.runs == 1 else "s" }} · list prices per 1M tokens</p>
+      <p>Each group is one batch on its own axis · Lift / $1 from real-model runs only</p>
+      {% if gs %}<p class="guarded-only"><span class="ring"></span>Guarded · <span class="num">{{ gs.policy_violations }}</span> policy breaks</p>{% endif %}
+    </div>
+    <script>
+      (function () {
+        var box = document.getElementById("show-guarded"), section = document.getElementById("model-comparison");
+        box.addEventListener("change", function () { section.classList.toggle("show-guarded", box.checked); });
+      })();
+    </script>
+  </section>
 
   <div class="section-head">
     <h2>Leaderboard</h2>
@@ -112,9 +159,9 @@
   {% endif %}
   {% if not rows %}<p class="note" style="margin-top:1rem">No experiments yet.</p>{% else %}
   <div class="table-wrap">
-  <table style="min-width:1000px">
-    <thead><tr><th>#</th><th>Agent</th><th>Msg / hold</th><th>Estimated lift (95%)</th><th>True</th><th>Claimed</th>
-        <th>Overclaim</th><th>Model cost</th><th>Lift / $1</th><th>Quality</th><th>Breaks</th></tr></thead>
+  <table style="min-width:860px">
+    <thead><tr style="white-space:nowrap"><th>#</th><th>Agent</th><th>Msg / hold</th><th>Estimated lift (95%)</th><th>True</th><th>Claimed</th>
+        <th>Overclaim</th><th>Quality</th><th>Breaks</th></tr></thead>
     <tbody>
     {% for e, s in rows %}
     {% set est = s.estimate %}
@@ -140,14 +187,12 @@
           <div class="truth" style="left:{{ pct(s.caused_revenue_cents) }}%"></div>
           <div class="claim" style="left:{{ pct(s.claimed_revenue_cents) }}%"></div>
         </div>
-        {% if not est.significant %}<p class="note t-warn" style="margin:0.375rem 0 0">can't tell from $0</p>{% endif %}
+        {% if not est.significant %}<p class="note t-warn" style="margin:0.375rem 0 0">Includes $0</p>{% endif %}
         {% else %}<span class="note">no holdout</span>{% endif %}
       </td>
       <td class="num t-success">{{ s.caused_revenue_cents|money }}</td>
       <td class="num muted">{{ s.claimed_revenue_cents|money }}</td>
       <td class="num t-primary" style="font-weight:600">{{ ("%.1f×"|format(s.claimed_vs_true)) if s.claimed_vs_true else "–" }}</td>
-      <td class="num muted">{{ s.agent_cost_usd|usd_small if s.agent_cost_micros else "–" }}</td>
-      <td class="num">{{ ("$" ~ "{:,.0f}".format(s.lift_per_dollar)) if s.lift_per_dollar is not none else "–" }}</td>
       <td>{% if s.avg_quality is not none %}<div class="qbar"><div class="bar"><span style="width:{{ s.avg_quality }}%"></span></div><span class="num note">{{ s.avg_quality }}</span></div>{% else %}<span class="muted">–</span>{% endif %}</td>
       <td class="num {{ 't-danger' if s.policy_violations else 'muted' }}" style="{{ 'font-weight:600' if s.policy_violations }}">{{ s.policy_violations }}</td>
     </tr>
@@ -155,11 +200,7 @@
     </tbody>
   </table>
   </div>
-  <p class="note" style="margin-top:1rem;max-width:48rem">Sorted by the lift a real store could measure (estimated from the holdout), then by true lift.
-  "True lift" uses the simulator's hidden answers: what messaged shoppers paid minus what they would have paid with no message.
-  Overclaim is claimed ÷ true. Model cost is the agent's own model calls at list price (shopper bots and the judge are lab overhead and not included);
-  Lift / $1 is true lift per dollar of that cost. In offline mode token counts are estimated, so costs show what real models would have charged.
-  Quality (0-100) combines five rule checks with an AI judge.</p>
+  <p class="note" style="margin-top:1rem;max-width:48rem">Ranked by estimated lift. <span class="num">Quality: 0–100.</span> Breaks: policy violations.</p>
   {% endif %}
 {% endif %}
 </div>
