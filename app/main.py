@@ -20,6 +20,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from app.agents import AGENTS
 from app.config import APP_NAME
 from app.db import SessionLocal, get_session, init_db
+from app.evals.draft_checks import score_draft, summarize_scores
 from app.experiments import create_experiment, run_experiment, summarize
 from app.experiments.runner import done_cache
 from app.llm import get_llm, mode_for
@@ -534,6 +535,49 @@ def _draft_runs_left(session: Session) -> int | None:
     return max(0, DRAFT_RUNS_PER_DAY - used)
 
 
+def _score_run(exp: Experiment, by_id: dict) -> dict:
+    """Rule-check every draft in a Live store run: {conversation id: DraftScore or None}."""
+    out = {}
+    for conv in exp.conversations:
+        co = by_id.get(conv.checkout_id)
+        text = conv.messages[0].text if conv.messages else ""
+        out[conv.id] = score_draft(
+            text,
+            first_name=co.customer.first_name if co else "",
+            products=[i.product.title for i in co.items] if co else [],
+            link=co.recovery_url if co else None,
+        ) if co else None
+    return out
+
+
+def _draft_scores(session: Session, store, by_id: dict, shadows: list[Experiment]):
+    """Scores for the runs on the page, and the latest finished run of every agent, for comparing models."""
+    scores, run_scores = {}, {}
+    for e in shadows:
+        scores.update(s := _score_run(e, by_id))
+        run_scores[e.id] = summarize_scores(list(s.values()))
+    by_model = []
+    if store is not None:
+        done = session.scalars(
+            select(Experiment)
+            .where(Experiment.store_id == store.id, Experiment.shadow, Experiment.status == ExperimentStatus.done)
+            .options(selectinload(Experiment.conversations).selectinload(Conversation.messages))
+            .order_by(Experiment.id.desc())
+        )
+        seen = set()
+        for e in done:
+            if (e.agent_key, e.guardrails) in seen or e.agent_key not in AGENTS:
+                continue
+            seen.add((e.agent_key, e.guardrails))
+            summary = summarize_scores(list(_score_run(e, by_id).values()))
+            if summary:
+                drafts = [c for c in e.conversations if c.agent_cost_micros]
+                cost = sum(c.agent_cost_micros for c in drafts) / len(drafts) / 1_000_000 if drafts else None
+                by_model.append({"exp": e, "label": AGENTS[e.agent_key][0], "s": summary, "cost": cost})
+        by_model.sort(key=lambda r: (-r["s"].avg_score, r["cost"] if r["cost"] is not None else 0))
+    return scores, run_scores, by_model
+
+
 @app.get("/shopify", response_class=HTMLResponse)
 def shopify_page(request: Request, msg: str = "", error: str = "", session: Session = Depends(get_session)):
     client = client_from_env()
@@ -561,6 +605,7 @@ def shopify_page(request: Request, msg: str = "", error: str = "", session: Sess
             )
         )
     by_id = {c.id: c for c in checkouts}
+    scores, run_scores, by_model = _draft_scores(session, store, by_id, shadows)
     return templates.TemplateResponse(
         request,
         "shopify.html",
@@ -574,6 +619,9 @@ def shopify_page(request: Request, msg: str = "", error: str = "", session: Sess
             "running": any(e.status.value in ("queued", "running") for e in shadows),
             "draft_mode": mode_for(shadow=True),
             "runs_left": _draft_runs_left(session),
+            "scores": scores,
+            "run_scores": run_scores,
+            "by_model": by_model,
             "msg": msg,
             "error": error,
         },
