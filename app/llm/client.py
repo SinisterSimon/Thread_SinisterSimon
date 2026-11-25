@@ -83,10 +83,14 @@ class AnthropicLLM:
     # off mid-sentence ("Orders ship within 1"). So: thinking off, roomier limit,
     # and an error instead of a silently broken message.
     MAX_TOKENS = 1024
-    # Opus 5.5 and Fable 5.2 refuse thinking={"type": "disabled"} (HTTP 400). They take
-    # adaptive thinking with an effort level instead: "low" keeps thinking short, and the
-    # roomier limit leaves space for the reply after it. Other models that reject
-    # "disabled" are learned on the first 400 and get the same treatment.
+    # How to keep thinking off differs by model, and Anthropic has changed it over time:
+    # - most models: {"type": "disabled"}
+    # - some now refuse that (HTTP 400) and ask for {"type": "between_tools"}: no thinking
+    #   before the reply, short notes only between tool calls (Thread uses no tools)
+    # - Opus 5.5 and Fable 5.2 take adaptive thinking with effort "low" instead, with a
+    #   roomier limit so the reply fits after the thinking.
+    # A model that rejects its setting is switched to the one the error asks for and
+    # remembered, so only its first call pays for the retry.
     ADAPTIVE_ONLY = {"claude-opus-5-5", "claude-fable-5-2"}
     ADAPTIVE_MAX_TOKENS = 4096
 
@@ -94,16 +98,26 @@ class AnthropicLLM:
         import anthropic  # imported lazily so offline mode needs no SDK
 
         self._client = anthropic.Anthropic(api_key=api_key)
-        self._adaptive = set(self.ADAPTIVE_ONLY)
+        self._mode = dict.fromkeys(self.ADAPTIVE_ONLY, "adaptive")
 
     def _thinking(self, model: str) -> dict:
-        if model in self._adaptive:
+        mode = self._mode.get(model, "disabled")
+        if mode == "adaptive":
             return {
                 "max_tokens": self.ADAPTIVE_MAX_TOKENS,
                 "thinking": {"type": "adaptive"},
                 "extra_body": {"output_config": {"effort": "low"}},
             }
-        return {"max_tokens": self.MAX_TOKENS, "thinking": {"type": "disabled"}}
+        return {"max_tokens": self.MAX_TOKENS, "thinking": {"type": mode}}
+
+    @staticmethod
+    def _asked_for(error: str, current: str) -> str | None:
+        """The thinking setting a 400 error asks for instead of the current one, if any."""
+        if "between_tools" in error and current != "between_tools":
+            return "between_tools"
+        if "thinking" in error and current == "disabled":
+            return "adaptive"  # the older error wording ("thinking.type.disabled ...")
+        return None
 
     def _create(self, model: str, system: str, messages: list[Message]):
         args = {
@@ -111,13 +125,16 @@ class AnthropicLLM:
             "system": system,
             "messages": [{"role": m.role, "content": m.text} for m in messages],
         }
-        try:
-            return self._client.messages.create(**args, **self._thinking(model)), model in self._adaptive
-        except Exception as err:
-            if "thinking.type.disabled" not in str(err) or model in self._adaptive:
-                raise
-            self._adaptive.add(model)
-            return self._client.messages.create(**args, **self._thinking(model)), True
+        for _ in range(3):  # at most two switches, then the error stands
+            try:
+                resp = self._client.messages.create(**args, **self._thinking(model))
+                return resp, self._mode.get(model) == "adaptive"
+            except Exception as err:
+                switch = self._asked_for(str(err), self._mode.get(model, "disabled"))
+                if switch is None:
+                    raise
+                self._mode[model] = switch
+        raise LLMError(f"{model} rejected every way of turning thinking off")
 
     def complete(self, *, system: str, messages: list[Message], model: str) -> LLMReply:
         system = system.split(OfflineLLM.MARKER, 1)[0]  # never send offline scripts
