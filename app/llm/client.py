@@ -7,6 +7,7 @@ Pick one with the LLM_MODE environment variable:
   gemini-* to Google (GEMINI_API_KEY). A key is only needed for the models used.
 """
 import os
+import time
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -147,6 +148,8 @@ class GeminiLLM:
     """
 
     MAX_TOKENS = 4096  # room for short thinking plus a one- or two-sentence reply
+    # Busy (503) and per-minute limits (429) usually clear within seconds: wait, then try again.
+    RETRY_DELAYS = (2, 5)
     BLOCKED = {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION"}
 
     def __init__(self, api_key: str):
@@ -154,6 +157,7 @@ class GeminiLLM:
 
         self._client = genai.Client(api_key=api_key)
         self._no_thinking_level: set[str] = set()
+        self._sleep = time.sleep  # swapped out in tests
 
     def _config(self, model: str, system: str):
         from google.genai import types
@@ -171,17 +175,24 @@ class GeminiLLM:
             types.Content(role="model" if m.role == "assistant" else "user", parts=[types.Part(text=m.text)])
             for m in messages
         ]
-        try:
-            return self._client.models.generate_content(
-                model=model, contents=contents, config=self._config(model, system)
-            )
-        except Exception as err:
-            if "thinking" not in str(err).lower() or model in self._no_thinking_level:
-                raise
-            self._no_thinking_level.add(model)
-            return self._client.models.generate_content(
-                model=model, contents=contents, config=self._config(model, system)
-            )
+        retries = 0
+        while True:
+            try:
+                return self._client.models.generate_content(
+                    model=model, contents=contents, config=self._config(model, system)
+                )
+            except Exception as err:
+                text = str(err)
+                if "thinking" in text.lower() and model not in self._no_thinking_level:
+                    self._no_thinking_level.add(model)  # retry without thinking_level, remembered
+                    continue
+                if retries < len(self.RETRY_DELAYS) and _gemini_transient(text):
+                    self._sleep(self.RETRY_DELAYS[retries])
+                    retries += 1
+                    continue
+                # One plain sentence instead of Google's raw error, and an LLMError so a failed
+                # draft shows "(No draft: ...)" while the rest of the run carries on.
+                raise LLMError(_gemini_explain(model, text)) from err
 
     def complete(self, *, system: str, messages: list[Message], model: str) -> LLMReply:
         system = system.split(OfflineLLM.MARKER, 1)[0]  # never send offline scripts
@@ -203,6 +214,24 @@ class GeminiLLM:
             input_tokens=usage.prompt_token_count or 0,
             output_tokens=(usage.candidates_token_count or 0) + (usage.thoughts_token_count or 0),
         )
+
+
+def _gemini_transient(text: str) -> bool:
+    """Errors worth one more try: Google busy or a short rate limit (not a model the plan lacks)."""
+    if "limit: 0" in text:
+        return False  # the free tier has no quota for this model; waiting won't help
+    return any(code in text for code in ("503", "UNAVAILABLE", "500", "INTERNAL", "429", "RESOURCE_EXHAUSTED"))
+
+
+def _gemini_explain(model: str, text: str) -> str:
+    if "limit: 0" in text:
+        return f"{model} isn't available on the Gemini free tier; turn on billing for the Gemini API key"
+    if "429" in text or "RESOURCE_EXHAUSTED" in text:
+        return f"{model} hit a Gemini rate limit (the free tier allows a few requests a minute and a day); try later"
+    if "503" in text or "UNAVAILABLE" in text:
+        return f"{model} is busy at Google right now (503); try again in a minute"
+    first_line = text.splitlines()[0] if text else "no details"
+    return f"{model} call failed: {first_line[:160]}"
 
 
 PROVIDERS = {

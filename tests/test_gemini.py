@@ -123,3 +123,47 @@ def test_live_mode_and_its_old_name_both_route_and_offline_stays_free(monkeypatc
 def test_gemini_is_priced():
     # 1M input + 1M output on Gemini Flash = $0.75 + $3.75
     assert cost_micros("gemini-3.8-flash", 1_000_000, 1_000_000) == 4_500_000
+
+
+def _failing(fake, errors):
+    """Make the fake raise each error in turn, then answer normally."""
+    queue = list(errors)
+
+    def generate(**kwargs):
+        fake.calls.append(kwargs)
+        if queue:
+            raise RuntimeError(queue.pop(0))
+        return fake._resp
+
+    fake.models.generate_content = generate
+    return fake
+
+
+BUSY = "503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand.'}}"
+NO_QUOTA = ("429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota ... "
+            "generate_content_free_tier_input_token_count, limit: 0, model: gemini-4-argon'}}")
+
+
+def test_a_busy_gemini_is_retried_after_a_short_wait():
+    fake = _failing(_FakeGenai(_resp("Your cart is saved.")), [BUSY, BUSY])
+    llm = _gemini(fake)
+    waits = []
+    llm._sleep = waits.append
+    reply = llm.complete(system="s", messages=[Message("user", "go")], model="gemini-3.8-flash")
+    assert reply.text == "Your cart is saved."
+    assert waits == [2, 5] and len(fake.calls) == 3
+
+
+def test_gemini_failures_become_one_plain_sentence_not_a_crashed_run():
+    llm = _gemini(_failing(_FakeGenai(_resp("x")), [BUSY] * 5))
+    llm._sleep = lambda _: None
+    with pytest.raises(LLMError, match=r"busy at Google right now \(503\); try again in a minute$"):
+        llm.complete(system="s", messages=[Message("user", "go")], model="gemini-3.8-flash")
+
+    # A model the free tier has no quota for fails at once: waiting won't help, billing will.
+    fake = _failing(_FakeGenai(_resp("x")), [NO_QUOTA])
+    llm = _gemini(fake)
+    llm._sleep = lambda _: pytest.fail("should not wait for a model the plan lacks")
+    with pytest.raises(LLMError, match="isn't available on the Gemini free tier; turn on billing"):
+        llm.complete(system="s", messages=[Message("user", "go")], model="gemini-4-argon")
+    assert len(fake.calls) == 1
