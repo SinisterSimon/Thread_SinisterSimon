@@ -79,24 +79,49 @@ class AnthropicLLM:
     # off mid-sentence ("Orders ship within 1"). So: thinking off, roomier limit,
     # and an error instead of a silently broken message.
     MAX_TOKENS = 1024
+    # Opus 5.5 and Fable 5.2 refuse thinking={"type": "disabled"} (HTTP 400). They take
+    # adaptive thinking with an effort level instead: "low" keeps thinking short, and the
+    # roomier limit leaves space for the reply after it. Other models that reject
+    # "disabled" are learned on the first 400 and get the same treatment.
+    ADAPTIVE_ONLY = {"claude-opus-5-5", "claude-fable-5-2"}
+    ADAPTIVE_MAX_TOKENS = 4096
 
     def __init__(self, api_key: str):
         import anthropic  # imported lazily so offline mode needs no SDK
 
         self._client = anthropic.Anthropic(api_key=api_key)
+        self._adaptive = set(self.ADAPTIVE_ONLY)
+
+    def _thinking(self, model: str) -> dict:
+        if model in self._adaptive:
+            return {
+                "max_tokens": self.ADAPTIVE_MAX_TOKENS,
+                "thinking": {"type": "adaptive"},
+                "extra_body": {"output_config": {"effort": "low"}},
+            }
+        return {"max_tokens": self.MAX_TOKENS, "thinking": {"type": "disabled"}}
+
+    def _create(self, model: str, system: str, messages: list[Message]):
+        args = {
+            "model": model,
+            "system": system,
+            "messages": [{"role": m.role, "content": m.text} for m in messages],
+        }
+        try:
+            return self._client.messages.create(**args, **self._thinking(model)), model in self._adaptive
+        except Exception as err:
+            if "thinking.type.disabled" not in str(err) or model in self._adaptive:
+                raise
+            self._adaptive.add(model)
+            return self._client.messages.create(**args, **self._thinking(model)), True
 
     def complete(self, *, system: str, messages: list[Message], model: str) -> LLMReply:
         system = system.split(OfflineLLM.MARKER, 1)[0]  # never send offline scripts
-        resp = self._client.messages.create(
-            model=model,
-            max_tokens=self.MAX_TOKENS,
-            thinking={"type": "disabled"},
-            system=system,
-            messages=[{"role": m.role, "content": m.text} for m in messages],
-        )
+        resp, adaptive = self._create(model, system, messages)
         text = "".join(block.text for block in resp.content if block.type == "text")
         if resp.stop_reason == "max_tokens":
-            raise LLMError(f"{model} hit the {self.MAX_TOKENS}-token limit; the reply would be cut off")
+            limit = self.ADAPTIVE_MAX_TOKENS if adaptive else self.MAX_TOKENS
+            raise LLMError(f"{model} hit the {limit}-token limit; the reply would be cut off")
         if resp.stop_reason == "refusal":
             raise LLMError(f"{model} declined to write this message (stop reason: refusal)")
         if not text.strip():
