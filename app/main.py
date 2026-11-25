@@ -168,6 +168,18 @@ def demo(background: BackgroundTasks):
     return RedirectResponse("/experiments", status_code=303)
 
 
+def _range_scale(rows) -> tuple[float, float]:
+    """One shared axis (in cents) for every leaderboard range bar, always including $0."""
+    values = [0]
+    for _, s in rows:
+        values += [s.claimed_revenue_cents, s.caused_revenue_cents]
+        if s.estimate:
+            values += [s.estimate.ci_low, s.estimate.ci_high]
+    lo, hi = min(values), max(values)
+    pad = (hi - lo) * 0.04 or 1
+    return lo - pad, hi + pad
+
+
 @app.get("/experiments", response_class=HTMLResponse)
 def experiments_page(request: Request, session: Session = Depends(get_session)):
     store = latest_store(session)
@@ -187,6 +199,7 @@ def experiments_page(request: Request, session: Session = Depends(get_session)):
         {
             "store": store,
             "rows": rows,
+            "scale": _range_scale(rows),
             "worker": WORKER_ENABLED,
             "reachable": reachable,
             "building": is_building(),

@@ -1,62 +1,98 @@
 {% extends "base.html" %}
 {% block title %}Experiments{% endblock %}
 {% block head %}{% if building or running %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% macro pct(v) %}{{ "%.2f"|format((v - scale[0]) / (scale[1] - scale[0]) * 100) }}{% endmacro %}
 {% block content %}
+<div class="wrap page">
 {% include "_building.html" %}
+<h1>Experiments</h1>
 {% if not store %}
-  {% if not building %}<div class="empty"><p>Simulate a store first, then run agents against its abandoned checkouts.</p></div>{% endif %}
+  {% if not building %}<div class="empty" style="margin-top:1.5rem"><p>Simulate a store first, then run agents against its abandoned checkouts.</p>
+    <a class="btn btn-outline" href="/store">Go to Store</a></div>{% endif %}
 {% else %}
-  <h2 style="margin-top:0">Run an agent</h2>
-  <form method="post" action="/experiments" class="card" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap">
-    <label><div class="label">Agent</div>
-      <select name="agent_key">
-        {% for key, a in agents.items() %}<option value="{{ key }}">{{ a[0] }}</option>{% endfor %}
-      </select></label>
-    <label><div class="label">Shoppers</div><input type="number" name="sample_size" value="{{ reachable or 150 }}" min="1" max="5000" style="width:90px"></label>
-    <label><div class="label">Holdout %</div><input type="number" name="holdout_pct" value="50" min="0" max="90" style="width:80px"></label>
-    <label style="display:flex;gap:6px;align-items:center;padding-bottom:8px"><input type="checkbox" name="guardrails" value="true"> Guardrails on</label>
-    <button type="submit">Start</button>
-    <span class="note">{{ "Queued for the worker." if worker else "Runs right away in the app." }}
-      The holdout share gets no message; it's how a real store measures lift.</span>
-  </form>
+  <div class="run-grid">
+    <form method="post" action="/experiments" class="card">
+      <p class="eyebrow">Run an agent</p>
+      <div class="run-fields">
+        <label class="field">Agent
+          <select name="agent_key">
+            {% for key, a in agents.items() %}<option value="{{ key }}">{{ a[0] }}</option>{% endfor %}
+          </select></label>
+        <label class="field">Shoppers<input type="number" name="sample_size" value="{{ reachable or 150 }}" min="1" max="5000"></label>
+        <label class="field">Holdout %<input type="number" name="holdout_pct" value="50" min="0" max="90"></label>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:1rem;margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid var(--border)">
+        <label class="toggle"><input type="checkbox" name="guardrails" value="true"><span class="track"></span>
+          <span class="off">Guardrails off</span><span class="on">Guardrails on</span></label>
+        <button type="submit">Start run</button>
+      </div>
+      <p class="note" style="margin:0.75rem 0 0">{{ "Queued for the worker." if worker else "Runs right away in the app." }}
+        The holdout share gets no message; that's how a real store measures lift.</p>
+    </form>
+    <form method="post" action="/experiments/run-all" class="card-ink">
+      <input type="hidden" name="holdout_pct" value="50">
+      <div>
+        <p class="eyebrow">Quick compare</p>
+        <p style="margin:0.75rem 0 0;font-size:0.875rem;line-height:1.6;opacity:.8">Baseline, pushy, and pushy with guardrails, on every textable checkout with a 50% holdout.</p>
+      </div>
+      <button type="submit" class="btn-on-ink" style="margin-top:1.5rem;justify-content:center">Run all three agents →</button>
+    </form>
+  </div>
 
-  <form method="post" action="/experiments/run-all" style="margin-top:12px;display:flex;gap:10px;align-items:center">
-    <input type="hidden" name="holdout_pct" value="50">
-    <button type="submit" class="btn-secondary">Run all three agents</button>
-    <span class="note">Baseline, pushy, and pushy with guardrails, on every textable checkout with a 50% holdout.</span>
-  </form>
-
-  <h2>Leaderboard</h2>
+  <div class="section-head">
+    <h2>Leaderboard</h2>
+    {% if rows %}<div class="legend"><span><i class="sw-band"></i>95% range</span><span><i class="sw-true"></i>true lift</span><span><i class="sw-claim"></i>claimed</span></div>{% endif %}
+  </div>
   {% if rows and rows|selectattr("0.status.value", "in", ["queued", "running"])|list %}
-  <p class="note">Some runs are still going. This page refreshes itself.</p>
+  <p class="note" style="margin-top:0.75rem">Some runs are still going. This page refreshes itself.</p>
   {% endif %}
-  {% if not rows %}<p class="note">No experiments yet.</p>{% else %}
-  <table>
-    <tr><th>#</th><th>Agent</th><th>Shoppers<br><span class="note">messaged / holdout</span></th>
-        <th>Claimed</th><th>Estimated lift<br><span class="note">from holdout, 95% range</span></th><th>True lift</th>
-        <th>Claimed ÷ true</th><th>Quality</th><th>Policy breaks</th></tr>
+  {% if not rows %}<p class="note" style="margin-top:1rem">No experiments yet.</p>{% else %}
+  <div class="table-wrap">
+  <table style="min-width:860px">
+    <thead><tr><th>#</th><th>Agent</th><th>Msg / hold</th><th>Estimated lift (95%)</th><th>True</th><th>Claimed</th>
+        <th>Overclaim</th><th>Quality</th><th>Breaks</th></tr></thead>
+    <tbody>
     {% for e, s in rows %}
+    {% set est = s.estimate %}
     <tr>
-      <td><a href="/experiments/{{ e.id }}">{{ e.id }}</a></td>
-      <td>{{ agents[e.agent_key][0] if e.agent_key in agents else e.agent_key }}
-        {% if e.guardrails %}<span class="pill">guardrails</span>{% endif %}
-        {% if e.status.value != "done" %}<span class="pill">{{ e.status.value }}</span>{% endif %}</td>
-      <td>{{ s.conversations }} / {{ s.holdout_size }}</td>
-      <td>{{ s.claimed_revenue_cents|money }}</td>
-      <td>{% if s.estimate %}<strong>{{ s.estimate.total_lift|money }}</strong>
-          <span class="note">{{ s.estimate.ci_low|money }} to {{ s.estimate.ci_high|money }}</span>
-          {% if not s.estimate.significant %}<br><span class="note">can't tell from $0</span>{% endif %}
-        {% else %}<span class="note">no holdout</span>{% endif %}</td>
-      <td>{{ s.caused_revenue_cents|money }}</td>
-      <td>{{ ("%.1f×"|format(s.claimed_vs_true)) if s.claimed_vs_true else "–" }}</td>
-      <td>{{ s.avg_quality if s.avg_quality is not none else "–" }}</td>
-      <td>{{ s.policy_violations }}</td>
+      <td class="num muted">{{ loop.index }}</td>
+      <td><a href="/experiments/{{ e.id }}">{{ agents[e.agent_key][0] if e.agent_key in agents else e.agent_key }}</a>
+        <div style="margin-top:0.25rem;display:flex;gap:0.375rem;align-items:center">
+          <span class="num note">run #{{ e.id }}</span>
+          {% if e.guardrails %}<span class="badge badge-success">guardrails</span>{% endif %}
+          {% if e.status.value != "done" %}<span class="badge badge-primary">{{ e.status.value }}</span>{% endif %}
+        </div></td>
+      <td class="num muted">{{ s.conversations }} / {{ s.holdout_size }}</td>
+      <td style="width:280px">
+        {% if est %}
+        <div style="display:flex;align-items:baseline;gap:0.5rem">
+          <span class="num" style="font-weight:600">{{ est.total_lift|money }}</span>
+          <span class="num note">{{ est.ci_low|money }} – {{ est.ci_high|money }}</span>
+        </div>
+        <div class="range" title="95% range {{ est.ci_low|money }} to {{ est.ci_high|money }}; true lift {{ s.caused_revenue_cents|money }}; claimed {{ s.claimed_revenue_cents|money }}">
+          <div class="axis"></div>
+          <div class="zero" style="left:{{ pct(0) }}%"></div>
+          <div class="band" style="left:{{ pct(est.ci_low) }}%;width:{{ "%.2f"|format(pct(est.ci_high)|float - pct(est.ci_low)|float) }}%"></div>
+          <div class="truth" style="left:{{ pct(s.caused_revenue_cents) }}%"></div>
+          <div class="claim" style="left:{{ pct(s.claimed_revenue_cents) }}%"></div>
+        </div>
+        {% if not est.significant %}<p class="note t-warn" style="margin:0.375rem 0 0">can't tell from $0</p>{% endif %}
+        {% else %}<span class="note">no holdout</span>{% endif %}
+      </td>
+      <td class="num t-success">{{ s.caused_revenue_cents|money }}</td>
+      <td class="num muted">{{ s.claimed_revenue_cents|money }}</td>
+      <td class="num t-primary" style="font-weight:600">{{ ("%.1f×"|format(s.claimed_vs_true)) if s.claimed_vs_true else "–" }}</td>
+      <td>{% if s.avg_quality is not none %}<div class="qbar"><div class="bar"><span style="width:{{ s.avg_quality }}%"></span></div><span class="num note">{{ s.avg_quality }}</span></div>{% else %}<span class="muted">–</span>{% endif %}</td>
+      <td class="num {{ 't-danger' if s.policy_violations else 'muted' }}" style="{{ 'font-weight:600' if s.policy_violations }}">{{ s.policy_violations }}</td>
     </tr>
     {% endfor %}
+    </tbody>
   </table>
-  <p class="note">Sorted by the lift a real store could measure (estimated from the holdout), then by true lift.
+  </div>
+  <p class="note" style="margin-top:1rem;max-width:48rem">Sorted by the lift a real store could measure (estimated from the holdout), then by true lift.
   "True lift" uses the simulator's hidden answers: what messaged shoppers paid minus what they would have paid with no message.
-  Quality (0-100) combines five rule checks with an AI judge.</p>
+  Overclaim is claimed ÷ true. Quality (0-100) combines five rule checks with an AI judge.</p>
   {% endif %}
 {% endif %}
+</div>
 {% endblock %}

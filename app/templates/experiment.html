@@ -2,61 +2,71 @@
 {% from "_lift_chart.html" import lift_chart %}
 {% block title %}Experiment {{ e.id }}{% endblock %}
 {% block content %}
-<p class="label"><a href="/experiments">Experiments</a> / #{{ e.id }}</p>
-<h2 style="margin-top:0">{{ agents[e.agent_key][0] if e.agent_key in agents else e.agent_key }}
-  <span class="pill">{{ e.status.value }}</span>{% if e.guardrails %} <span class="pill">guardrails on</span>{% endif %}
-  {% if e.holdout_pct %} <span class="pill">{{ e.holdout_pct }}% holdout</span>{% endif %}</h2>
+<div class="wrap page">
+<p class="crumbs"><a href="/experiments">Experiments</a> / run #{{ e.id }}</p>
+<h1>{{ agents[e.agent_key][0] if e.agent_key in agents else e.agent_key }}</h1>
+<div style="display:flex;gap:0.375rem;margin-top:0.75rem;flex-wrap:wrap">
+  <span class="badge {{ 'badge-primary' if e.status.value != 'done' }}">{{ e.status.value }}</span>
+  {% if e.guardrails %}<span class="badge badge-success">guardrails on</span>{% endif %}
+  {% if e.holdout_pct %}<span class="badge">{{ e.holdout_pct }}% holdout</span>{% endif %}
+</div>
 {% if e.status.value in ("queued", "running") %}
-  <p class="note">Still running. <a href="/experiments/{{ e.id }}">Refresh</a> in a few seconds.</p>
+  <div class="banner" style="margin-top:1.5rem"><span class="pulse"></span><strong>Still running.</strong>
+    <a class="muted" href="/experiments/{{ e.id }}">Refresh</a> in a few seconds.</div>
 {% endif %}
-{% if e.error %}<div class="callout">Failed: {{ e.error }}</div>{% endif %}
+{% if e.error %}<div class="banner error" style="margin-top:1.5rem"><strong>Failed.</strong> <span class="muted">{{ e.error }}</span></div>{% endif %}
 
 {% if e.status.value == "done" %}
-<h2>Did the messages work?</h2>
-<div class="card">
+<div class="section-head"><h2>Did the messages work?</h2></div>
+<div class="card" style="margin-top:1.25rem">
   {{ lift_chart(s) }}
   {% set est = s.estimate %}
   {% if est %}
-  <p class="note" style="margin-bottom:0">
+  <p class="note" style="margin:1rem 0 0;font-size:0.875rem">
     {{ s.conversations }} shoppers messaged, {{ s.holdout_size }} randomly left alone.
     Bought: {{ "%.1f"|format(est.conversion_treatment * 100) }}% vs {{ "%.1f"|format(est.conversion_holdout * 100) }}%.
     {% if est.significant and est.total_lift > 0 %}The holdout comparison shows a real positive effect.
     {% elif est.significant %}The holdout comparison shows messaging <strong>lost</strong> revenue.
     {% else %}The range includes $0: with this many shoppers a real store <strong>could not tell</strong> whether messaging helped.{% endif %}
-    {% if s.claimed_vs_true %}The claimed number is <strong>{{ "%.1f"|format(s.claimed_vs_true) }}×</strong> the true effect.{% endif %}
+    {% if s.claimed_vs_true %}The claimed number is <strong class="t-primary">{{ "%.1f"|format(s.claimed_vs_true) }}×</strong> the true effect.{% endif %}
   </p>
   {% endif %}
 </div>
 {% endif %}
 
-<div class="grid" style="margin-top:16px">
-  <div class="card"><div class="label">Conversations</div><div class="value">{{ s.conversations }}</div></div>
-  <div class="card"><div class="label">Purchases</div><div class="value">{{ s.purchases }}</div></div>
-  <div class="card"><div class="label">Claimed revenue</div><div class="value">{{ s.claimed_revenue_cents|money }}</div>
-    <div class="note">every purchase after a message</div></div>
-  <div class="card"><div class="label">True lift</div><div class="value">{{ s.caused_revenue_cents|money }}</div>
-    <div class="note">{{ s.anyway_revenue_cents|money }} would have come anyway, at full price</div></div>
-  <div class="card"><div class="label">Handoffs / discounts</div><div class="value">{{ s.handoffs }} / {{ s.discounted }}</div></div>
-  <div class="card"><div class="label">Quality</div><div class="value">{{ s.avg_quality if s.avg_quality is not none else "–" }}</div>
-    <div class="note">out of 100: rules + AI judge</div></div>
-  <div class="card"><div class="label">Policy breaks</div><div class="value">{{ s.policy_violations }}</div>
-    <div class="note">{% if e.guardrails %}{{ s.guardrail_fixes }} messages fixed by guardrails{% else %}guardrails off{% endif %}</div></div>
+<div class="stat-grid" style="margin-top:1.5rem">
+  <div><p class="eyebrow">Conversations</p><div class="value">{{ s.conversations }}</div></div>
+  <div><p class="eyebrow">Purchases</p><div class="value">{{ s.purchases }}</div></div>
+  <div><p class="eyebrow">Claimed revenue</p><div class="value">{{ s.claimed_revenue_cents|money }}</div>
+    <p class="note">every purchase after a message</p></div>
+  <div><p class="eyebrow">True lift</p><div class="value t-success">{{ s.caused_revenue_cents|money }}</div>
+    <p class="note">{{ s.anyway_revenue_cents|money }} would have come anyway, at full price</p></div>
+  <div><p class="eyebrow">Handoffs / discounts</p><div class="value">{{ s.handoffs }} / {{ s.discounted }}</div></div>
+  <div><p class="eyebrow">Quality</p><div class="value">{{ s.avg_quality if s.avg_quality is not none else "–" }}</div>
+    <p class="note">out of 100: rules + AI judge</p></div>
+  <div><p class="eyebrow">Policy breaks</p><div class="value {{ 't-danger' if s.policy_violations }}">{{ s.policy_violations }}</div>
+    <p class="note">{% if e.guardrails %}{{ s.guardrail_fixes }} messages fixed by guardrails{% else %}guardrails off{% endif %}</p></div>
 </div>
 
-<h2>Conversations</h2>
+<div class="section-head"><h2>Conversations</h2></div>
+<div class="table-wrap">
 <table>
-  <tr><th>#</th><th>Group</th><th>Shopper type</th><th>Bought</th><th>Would anyway</th><th>Discount</th><th>Handoff</th><th>Quality</th></tr>
+  <thead><tr><th>#</th><th>Group</th><th>Shopper type</th><th>Bought</th><th>Would anyway</th><th>Discount</th><th>Handoff</th><th>Quality</th></tr></thead>
+  <tbody>
   {% for c in convs %}
   <tr>
-    <td><a href="/conversations/{{ c.id }}">{{ c.id }}</a></td>
-    <td>{{ "messaged" if c.arm == "treatment" else "holdout" }}</td>
+    <td class="num"><a href="/conversations/{{ c.id }}">{{ c.id }}</a></td>
+    <td>{% if c.arm == "treatment" %}messaged{% else %}<span class="badge">holdout</span>{% endif %}</td>
     <td>{{ personas[c.persona_key].name if c.persona_key in personas else c.persona_key }}</td>
     <td>{{ "yes" if c.purchased else "no" }}</td>
-    <td>{{ "yes" if c.would_buy_anyway else "" }}</td>
-    <td>{{ (c.discount_pct ~ "%") if c.discount_pct else "" }}</td>
+    <td class="muted">{{ "yes" if c.would_buy_anyway else "" }}</td>
+    <td class="num">{{ (c.discount_pct ~ "%") if c.discount_pct else "" }}</td>
     <td>{{ "yes" if c.handed_off else "" }}</td>
-    <td>{{ c.score.quality if c.score else "–" }}</td>
+    <td class="num">{{ c.score.quality if c.score else "–" }}</td>
   </tr>
   {% endfor %}
+  </tbody>
 </table>
+</div>
+</div>
 {% endblock %}
