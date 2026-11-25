@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session, selectinload
 from starlette.middleware.gzip import GZipMiddleware
 
 from app.agents import AGENTS
+from app.channels import handle_reply, normalize, send_sms, twilio_signature_ok
 from app.config import APP_NAME
 from app.db import SessionLocal, get_session, init_db
 from app.evals.draft_checks import score_draft, summarize_scores
@@ -34,6 +35,7 @@ from app.models import (
     ConversationScore,
     Experiment,
     ExperimentStatus,
+    SentMessage,
 )
 from app.shopify import ShopifyError, client_from_env, sync_store
 from app.shopify.webhooks import verify_hmac
@@ -629,6 +631,9 @@ def shopify_page(request: Request, msg: str = "", error: str = "", session: Sess
             "draft_mode": mode_for(shadow=True),
             "runs_left": _draft_runs_left(session),
             "scores": scores,
+            "send_to": normalize(os.getenv("SEND_TEST_TO", "")),
+            "send_mode": os.getenv("SEND_MODE", "console").strip().lower(),
+            "sent": list(session.scalars(select(SentMessage).order_by(SentMessage.id.desc()).limit(8))),
             "run_scores": run_scores,
             "by_model": by_model,
             "msg": msg,
@@ -721,6 +726,41 @@ async def shopify_webhook(request: Request, background: BackgroundTasks):
     # Answer at once (Shopify waits only a few seconds) and do the work afterwards.
     background.add_task(_after_webhook)
     return {"ok": True}
+
+
+@app.post("/shopify/send-test/{conv_id}")
+def shopify_send_test(conv_id: int, session: Session = Depends(get_session)):
+    """Send one draft to YOUR phone (SEND_TEST_TO), never to the shopper. Allowlist rules apply."""
+    conv = session.get(Conversation, conv_id)
+    if conv is None or conv.arm != "shadow" or not conv.messages:
+        raise HTTPException(404)
+    text = conv.messages[0].text
+    if text.startswith("(No draft"):
+        note = "That draft failed, so there is nothing to send."
+        return RedirectResponse("/shopify?error=" + quote(note), status_code=303)
+    to = os.getenv("SEND_TEST_TO", "")
+    result = send_sms(session, to, text, conversation_id=conv.id)
+    note = {"sent": f"Sent to {_mask_phone(to)}.", "logged": "Logged only (SEND_MODE=console): nothing was sent."}
+    if result.status in note:
+        return RedirectResponse("/shopify?msg=" + quote(note[result.status]), status_code=303)
+    return RedirectResponse("/shopify?error=" + quote(f"Not sent: {result.detail}."), status_code=303)
+
+
+@app.post("/webhooks/twilio")
+async def twilio_webhook(request: Request, session: Session = Depends(get_session)):
+    """Inbound texts from Twilio. STOP opts a number out for good (until START). Signed requests only."""
+    form = {k: str(v) for k, v in (await request.form()).items()}
+    base = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+    if base:
+        url = base + request.url.path
+    else:  # behind Render's proxy the app sees http; Twilio signed the https URL
+        url = str(request.url.replace(scheme=request.headers.get("x-forwarded-proto", request.url.scheme)))
+    if not twilio_signature_ok(url, form, request.headers.get("X-Twilio-Signature"),
+                               os.getenv("TWILIO_AUTH_TOKEN", "").strip()):
+        raise HTTPException(401, "bad signature")
+    outcome = handle_reply(session, form.get("From", ""), form.get("Body", ""))
+    log.info("twilio inbound: %s", outcome)
+    return Response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', media_type="application/xml")
 
 
 @app.get("/api/metrics")
