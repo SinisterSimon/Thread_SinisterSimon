@@ -205,3 +205,16 @@ def test_real_model_drafts_are_capped_per_day(monkeypatch):
         assert asked == [True]  # the draft run asked for the draft model, not the lab's
         page = client.post("/shopify/draft", data={"agent_key": "baseline-haiku"}, follow_redirects=True).text
         assert "Daily limit" in page and asked == [True]  # the second run never started
+
+
+def test_live_store_shows_what_each_draft_cost(monkeypatch):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    db.engine = engine
+    db.SessionLocal.configure(bind=engine)
+    import app.main as main
+
+    monkeypatch.setattr(main, "client_from_env", lambda: fake_shopify()[0])
+    with TestClient(main.app) as client:
+        client.post("/shopify/sync")
+        page = client.post("/shopify/draft", data={"agent_key": "baseline-fable"}, follow_redirects=True).text
+        assert "Baseline · Fable" in page and "$0.00" in page  # fractions of a cent, shown with enough digits

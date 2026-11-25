@@ -61,7 +61,8 @@
       </div>
       <p class="note" style="margin:1rem 0 0;padding-top:1rem;border-top:1px solid var(--border)">Writes one opening message per shopper. Nothing leaves Thread.<br>
         {% if draft_mode == "offline" %}Offline mode: drafts are fixed sample lines.
-        {% else %}<span class="t-success">●</span> Written by real Claude models · {{ runs_left }} run{{ "" if runs_left == 1 else "s" }} left today.{% endif %}</p>
+        {% else %}<span class="t-success">●</span> Written by real Claude models · {{ runs_left }} run{{ "" if runs_left == 1 else "s" }} left today.{% endif %}
+        Each draft shows what the agent's model call cost at list price.</p>
     </form>
     {% endif %}
 
@@ -71,7 +72,8 @@
           <h3>{{ agents[e.agent_key][0] }}</h3>
           {% if e.guardrails %}<span class="badge badge-success">guardrails</span>{% endif %}
           <span class="badge {{ 'badge-primary' if e.status.value != 'done' }}">{{ e.status.value }}</span>
-          <span class="num note" style="margin-left:auto">run #{{ e.id }}</span>
+          {% set run_cost = e.conversations|sum(attribute="agent_cost_micros") %}
+          <span class="num note" style="margin-left:auto">{% if run_cost %}{{ (run_cost / 1000000)|usd_small }} · {% endif %}run #{{ e.id }}</span>
         </div>
         {% if e.error %}<p class="note t-danger">{{ e.error }}</p>{% endif %}
         {% if e.status.value in ("queued", "running") %}<p class="note">Drafting… this page refreshes itself.</p>{% endif %}
@@ -82,7 +84,8 @@
               <span class="num">{{ co.external_name if co else conv.checkout_id }}</span> · {{ co.customer.first_name if co else "" }}
               {% if conv.discount_pct %} · <strong class="t-danger">offers {{ conv.discount_pct }}% off unprompted</strong>{% endif %}
               {% if conv.guardrail_fixes %} · <span class="t-success">guardrails changed {{ conv.guardrail_fixes }} sentence(s)</span>{% endif %}
-              {% if conv.handed_off %} · hands off to a human{% endif %}</p>
+              {% if conv.handed_off %} · hands off to a human{% endif %}
+              {% if conv.agent_cost_micros %} · <span class="num">{{ (conv.agent_cost_micros / 1000000)|usd_small }}</span>{% endif %}</p>
             <div class="msg agent" style="max-width:100%;margin:0">{{ conv.messages[0].text if conv.messages else "" }}</div>
           </div>
         {% endfor %}
