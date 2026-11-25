@@ -43,7 +43,7 @@ def test_compare_models_runs_one_prompt_on_six_models_on_the_same_shoppers():
     with TestClient(main.app) as client:
         client.post("/simulate", data={"days": 20})
         page = client.post("/experiments/compare-models", follow_redirects=True).text
-        assert "Compare 6 models" in page and "Model cost" in page and "Lift / $1" in page
+        assert "Compare 6 models" in page and "Lift / $1" in page and "Price /1M in·out" in page
 
         with db.SessionLocal() as session:
             exps = session.scalars(select(Experiment).order_by(Experiment.id)).all()
@@ -73,20 +73,21 @@ def test_model_table_shows_prices_and_never_scores_a_model_from_offline_runs():
     from app.models import ConversationScore
 
     def model_table(page: str) -> str:
-        return page.split("<h2>Model comparison</h2>", 1)[1].split("<h2>Leaderboard</h2>", 1)[0]
+        return page.split('id="model-comparison"', 1)[1].split("<h2>Leaderboard</h2>", 1)[0]
 
     with TestClient(main.app) as client:
         client.post("/simulate", data={"days": 20})
         table = model_table(client.post("/experiments/compare-models", follow_redirects=True).text)
         # Cheapest first, list prices per 1M tokens (input / output).
         names = ["Haiku", "Gemini Flash", "Sonnet", "Opus", "Gemini Argon", "Fable"]
-        where = [table.index(f"<span>{n}</span>") for n in names]
+        where = [table.index(f"<h3>{n}</h3>") for n in names]
         assert where == sorted(where)
         for price in ("$0.10 / $0.50", "$0.75 / $3.75", "$2 / $10", "$4 / $20", "$8 / $40"):
-            assert f'<td class="fig">{price}</td>' in table
-        # Offline runs are scripted: all six stay unmeasured, with no lift, quality or lift per $1.
-        assert table.count("Not measured yet") == 6 and table.count("offline runs only") == 6
-        assert "run #" not in table and "qbar" not in table
+            assert f'<p class="mt-price num">{price}</p>' in table
+        # The strategy rows show the lab's own runs, marked offline. Offline runs never score a
+        # model: all six model rows stay "Not measured yet" (plus pushy, which has not run).
+        assert "· offline" in table
+        assert table.count("Not measured yet") == 7
 
         # A run whose judge used a real model counts as that model's measurement.
         with db.SessionLocal() as session:
@@ -97,5 +98,26 @@ def test_model_table_shows_prices_and_never_scores_a_model_from_offline_runs():
             session.commit()
             sonnet_id = sonnet.id
         table = model_table(client.get("/experiments").text)
-        assert table.count("Not measured yet") == 5
-        assert f'href="/experiments/{sonnet_id}">Sonnet</a>' in table and "qbar" in table
+        assert table.count("Not measured yet") == 6
+        assert f'href="/experiments/{sonnet_id}" style="text-decoration:none">Run {sonnet_id:02d}</a>' in table
+
+
+def test_attribution_lens_shows_real_claimed_and_true_lift_for_the_three_agents():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    db.engine = engine
+    db.SessionLocal.configure(bind=engine)
+    import app.main as main
+
+    with TestClient(main.app) as client:
+        assert "No runs yet" in client.get("/").text
+        client.post("/simulate", data={"days": 20})
+        client.post("/experiments/run-all", data={"holdout_pct": 50})
+        page = client.get("/").text
+        assert "Attribution lens" in page and 'type="range"' in page
+        money = main.templates.env.filters["money"]
+        with db.SessionLocal() as session:
+            exps = session.scalars(select(Experiment).order_by(Experiment.id)).all()
+            for name, exp in zip(["Baseline", "Pushy", "Pushy + guardrails"], exps, strict=True):
+                s = main.summarize(session, exp)
+                assert f'aria-label="{name} claimed revenue">{money(s.claimed_revenue_cents)}' in page
+                assert f'aria-label="{name} true lift">{money(s.caused_revenue_cents)}' in page
