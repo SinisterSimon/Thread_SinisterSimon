@@ -19,6 +19,7 @@ from app.evals import score_conversation
 from app.experiments.stats import LiftEstimate, estimate_lift
 from app.llm import LLM, Message
 from app.llm.client import LLMError
+from app.llm.pricing import cost_micros
 from app.models import (
     Checkout,
     CheckoutItem,
@@ -140,8 +141,10 @@ def _draft(session: Session, exp: Experiment, checkout: Checkout, llm: LLM, stor
     """
     meta = {"experiment_id": exp.id, "agent": exp.agent_key, "checkout_id": checkout.id, "shadow": True}
     with tracing.conversation_trace(f"draft:{exp.agent_key}", meta):
+        agent = get_agent(exp.agent_key, llm)
+        agent_model = agent.model
         try:
-            turn = get_agent(exp.agent_key, llm).respond([], _context(store, checkout))
+            turn = agent.respond([], _context(store, checkout))
         except LLMError as err:
             # One bad reply shouldn't sink the other drafts; show why instead.
             turn = AgentTurn(text=f"(No draft: {err}.)", handoff=False, end=False, discount_pct=0,
@@ -160,6 +163,7 @@ def _draft(session: Session, exp: Experiment, checkout: Checkout, llm: LLM, stor
             input_tokens=turn.input_tokens,
             output_tokens=turn.output_tokens,
             guardrail_fixes=fixes,
+            agent_cost_micros=cost_micros(agent_model, turn.input_tokens, turn.output_tokens),
             messages=[ConversationMessage(seq=0, sender="agent", text=turn.text)],
         )
     )
@@ -206,10 +210,11 @@ def _converse_inner(session: Session, exp: Experiment, checkout: Checkout, llm: 
     history: list[Message] = []
     transcript: list[tuple[str, str]] = []
     agent_text, handed_off, discount = [], False, 0
-    tokens_in = tokens_out = fixes = 0
+    tokens_in = tokens_out = fixes = agent_cost = 0
 
     for _ in range(MAX_ROUNDS):
         turn = agent.respond(history, ctx)
+        agent_cost += cost_micros(agent.model, turn.input_tokens, turn.output_tokens)
         if exp.guardrails:
             last_shopper = history[-1].text if history and history[-1].role == "user" else None
             turn, n = guard.apply(turn, last_shopper_text=last_shopper, discount_already_offered=discount > 0)
@@ -263,6 +268,7 @@ def _converse_inner(session: Session, exp: Experiment, checkout: Checkout, llm: 
             input_tokens=tokens_in + j_in,
             output_tokens=tokens_out + j_out,
             guardrail_fixes=fixes,
+            agent_cost_micros=agent_cost,
             score=ConversationScore(
                 addressed_objection=score.addressed_objection,
                 correct_handoff=score.correct_handoff,
@@ -322,6 +328,18 @@ class ExperimentSummary:
     guardrail_fixes: int             # agent messages the guardrails changed
     holdout_size: int = 0
     estimate: LiftEstimate | None = None  # what a real store would measure
+    agent_cost_micros: int = 0            # agent model calls at list price
+
+    @property
+    def agent_cost_usd(self) -> float:
+        return self.agent_cost_micros / 1_000_000
+
+    @property
+    def lift_per_dollar(self) -> float | None:
+        """True lift (in dollars) for every $1 spent on the agent's model calls."""
+        if self.agent_cost_micros <= 0:
+            return None
+        return (self.caused_revenue_cents / 100) / self.agent_cost_usd
 
     @property
     def claimed_vs_true(self) -> float | None:
@@ -366,4 +384,5 @@ def summarize(session: Session, exp: Experiment) -> ExperimentSummary:
         guardrail_fixes=sum(x.guardrail_fixes for x in treated),
         holdout_size=len(held),
         estimate=estimate,
+        agent_cost_micros=sum(x.agent_cost_micros for x in treated),
     )

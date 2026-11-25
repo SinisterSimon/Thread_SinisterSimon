@@ -37,6 +37,12 @@ templates.env.globals.update(
 # The agents compared by "Run all agents" and the demo: the good one, the bad one,
 # and the bad one behind guardrails.
 COMPARISON = (("baseline-haiku", False), ("pushy-haiku", False), ("pushy-haiku", True))
+# One prompt on four models, same shoppers, same holdout split. 100 checkouts with
+# a 50% holdout means about 50 messaged shoppers per model: around $4 in total
+# with real models (mostly Opus and Fable), free offline.
+MODEL_COMPARISON = ("baseline-haiku", "baseline-sonnet", "baseline-opus", "baseline-fable")
+MODEL_COMPARISON_CHECKOUTS = 100
+MODEL_COMPARISON_HOLDOUT_PCT = 50
 DEMO_DAYS = 180
 DEMO_HOLDOUT_PCT = 50
 
@@ -160,6 +166,20 @@ def run_all(
     return RedirectResponse("/experiments", status_code=303)
 
 
+@app.post("/experiments/compare-models")
+def compare_models(background: BackgroundTasks, session: Session = Depends(get_session)):
+    store = latest_store(session)
+    if store is None:
+        return RedirectResponse("/store", status_code=303)
+    for agent_key in MODEL_COMPARISON:
+        exp = create_experiment(
+            session, store.id, agent_key, MODEL_COMPARISON_CHECKOUTS, holdout_pct=MODEL_COMPARISON_HOLDOUT_PCT
+        )
+        if not WORKER_ENABLED:
+            background.add_task(_run_in_background, exp.id)
+    return RedirectResponse("/experiments", status_code=303)
+
+
 @app.post("/demo")
 def demo(background: BackgroundTasks):
     """One click: a fresh 180-day store, then the three-agent comparison with a 50% holdout."""
@@ -204,6 +224,7 @@ def experiments_page(request: Request, session: Session = Depends(get_session)):
             "reachable": reachable,
             "building": is_building(),
             "running": any(e.status.value in ("queued", "running") for e in exps),
+            "lab_mode": mode_for(),
         },
     )
 
@@ -274,6 +295,16 @@ def _mask_phone(phone: str | None) -> str:
     return f"•••{phone[-2:]}" if phone else ""
 
 
+def _usd_small(dollars: float) -> str:
+    """Model costs are often fractions of a cent: show enough digits to compare them."""
+    if dollars == 0:
+        return "$0"
+    if dollars < 0.01:
+        return f"${dollars:.4f}"
+    return f"${dollars:.3f}" if dollars < 1 else f"${dollars:,.2f}"
+
+
+templates.env.filters["usd_small"] = _usd_small
 templates.env.filters["mask_email"] = _mask_email
 templates.env.filters["mask_phone"] = _mask_phone
 

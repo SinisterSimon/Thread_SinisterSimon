@@ -39,6 +39,18 @@
     </form>
   </div>
 
+  <form method="post" action="/experiments/compare-models" class="card" style="margin-top:1rem;display:flex;gap:1.5rem;align-items:center;justify-content:space-between;flex-wrap:wrap">
+    <div style="max-width:44rem">
+      <p class="eyebrow">Compare models</p>
+      <p style="margin:0.5rem 0 0;font-size:0.9rem">The same baseline prompt on <strong>Haiku, Sonnet, Opus and Fable</strong>: same shoppers, same 50% holdout.
+        Does a pricier model earn back its cost in true lift?</p>
+      <p class="note" style="margin:0.4rem 0 0">{% if lab_mode == "offline" %}Offline mode: free, but scripted, so all four models answer the same.
+        Set <code>LLM_MODE=anthropic</code> for a real comparison.{% else %}Real models: about $4 for ~50 messaged shoppers per model, mostly Opus and Fable.{% endif %}
+        With ~50 shoppers per model the lift ranges are wide: expect it to show costs clearly and lift differences only if they are large.</p>
+    </div>
+    <button type="submit" class="btn-outline">Compare 4 models →</button>
+  </form>
+
   <div class="section-head">
     <h2>Leaderboard</h2>
     {% if rows %}<div class="legend"><span><i class="sw-band"></i>95% range</span><span><i class="sw-true"></i>true lift</span><span><i class="sw-claim"></i>claimed</span></div>{% endif %}
@@ -48,15 +60,15 @@
   {% endif %}
   {% if not rows %}<p class="note" style="margin-top:1rem">No experiments yet.</p>{% else %}
   <div class="table-wrap">
-  <table style="min-width:860px">
+  <table style="min-width:1000px">
     <thead><tr><th>#</th><th>Agent</th><th>Msg / hold</th><th>Estimated lift (95%)</th><th>True</th><th>Claimed</th>
-        <th>Overclaim</th><th>Quality</th><th>Breaks</th></tr></thead>
+        <th>Overclaim</th><th>Model cost</th><th>Lift / $1</th><th>Quality</th><th>Breaks</th></tr></thead>
     <tbody>
     {% for e, s in rows %}
     {% set est = s.estimate %}
     <tr>
       <td class="num muted">{{ loop.index }}</td>
-      <td><a href="/experiments/{{ e.id }}">{{ agents[e.agent_key][0] if e.agent_key in agents else e.agent_key }}</a>
+      <td style="white-space:nowrap"><a href="/experiments/{{ e.id }}">{{ agents[e.agent_key][0] if e.agent_key in agents else e.agent_key }}</a>
         <div style="margin-top:0.25rem;display:flex;gap:0.375rem;align-items:center">
           <span class="num note">run #{{ e.id }}</span>
           {% if e.guardrails %}<span class="badge badge-success">guardrails</span>{% endif %}
@@ -82,6 +94,8 @@
       <td class="num t-success">{{ s.caused_revenue_cents|money }}</td>
       <td class="num muted">{{ s.claimed_revenue_cents|money }}</td>
       <td class="num t-primary" style="font-weight:600">{{ ("%.1f×"|format(s.claimed_vs_true)) if s.claimed_vs_true else "–" }}</td>
+      <td class="num muted">{{ s.agent_cost_usd|usd_small if s.agent_cost_micros else "–" }}</td>
+      <td class="num">{{ ("$" ~ "{:,.0f}".format(s.lift_per_dollar)) if s.lift_per_dollar is not none else "–" }}</td>
       <td>{% if s.avg_quality is not none %}<div class="qbar"><div class="bar"><span style="width:{{ s.avg_quality }}%"></span></div><span class="num note">{{ s.avg_quality }}</span></div>{% else %}<span class="muted">–</span>{% endif %}</td>
       <td class="num {{ 't-danger' if s.policy_violations else 'muted' }}" style="{{ 'font-weight:600' if s.policy_violations }}">{{ s.policy_violations }}</td>
     </tr>
@@ -91,7 +105,9 @@
   </div>
   <p class="note" style="margin-top:1rem;max-width:48rem">Sorted by the lift a real store could measure (estimated from the holdout), then by true lift.
   "True lift" uses the simulator's hidden answers: what messaged shoppers paid minus what they would have paid with no message.
-  Overclaim is claimed ÷ true. Quality (0-100) combines five rule checks with an AI judge.</p>
+  Overclaim is claimed ÷ true. Model cost is the agent's own model calls at list price (shopper bots and the judge are lab overhead and not included);
+  Lift / $1 is true lift per dollar of that cost. In offline mode token counts are estimated, so costs show what real models would have charged.
+  Quality (0-100) combines five rule checks with an AI judge.</p>
   {% endif %}
 {% endif %}
 </div>
