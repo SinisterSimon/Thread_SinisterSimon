@@ -120,26 +120,47 @@
 
       {{ axis_row(sa) }}
 
-      <div class="model-group" style="margin-top:1.75rem"><span>Models · same baseline prompt</span><span>real-model runs only</span></div>
-      {% for m in cmp.models %}{% set ms = m.summary %}
-      <div class="model-table{{ ' model-row-unmeasured' if not (ms and ms.estimate) }}">
-        <div class="mt-name"><h3>{{ m.model }}</h3>
-          <p class="mt-sub{{ ' num' if m.experiment }}">{% if m.experiment %}<a href="/experiments/{{ m.experiment.id }}" style="text-decoration:none">{{ run_label(m) }}</a>{% elif m.status == "running" %}Running now{% else %}Not measured yet{% endif %}</p></div>
-        <p class="mt-price num">{{ m.price_in|per_mtok }} / {{ m.price_out|per_mtok }}</p>
-        <div class="mt-plot model-plot"><span class="model-zero" style="left:{{ pos(0, ma) }}%"></span>
-          {% if ms and ms.estimate %}{{ estimate(ms.estimate, ma) }}{% else %}<span class="model-empty"></span>{% endif %}</div>
-        <p class="mt-lift num{{ ' t-success' if ms and ms.estimate }}" data-label="Lift" style="font-weight:500">{{ ms.estimate.total_lift|money if ms and ms.estimate else dash() }}</p>
-        <p class="mt-quality num" data-label="Quality">{{ ms.avg_quality if ms and ms.avg_quality is not none else dash() }}</p>
-        <p class="mt-dollar num" data-label="Lift / $1">{% if m.lift_per_dollar is not none %}${{ "{:,.0f}".format(m.lift_per_dollar) }}{% else %}{{ dash() }}{% endif %}</p>
-      </div>
-      {% endfor %}
+    </div>
 
-      {{ axis_row(ma) }}
+    {# Models: lift came out the same for (almost) every model, because the simulated shoppers
+       react to the agent's decisions (discount, handoff), not its wording. So models are compared
+       on what does differ: quality, policy breaks and cost. #}
+    {% set measured = cmp.models|selectattr("summary")|list %}
+    <div class="model-group" style="margin-top:2.5rem"><span>Models · same prompt, same shoppers</span><span>real-model runs only</span></div>
+    {% if measured %}
+      {% set lifts = measured|map(attribute="summary.caused_revenue_cents")|list %}
+      {% set best_q = measured|map(attribute="summary.avg_quality")|select("number")|max %}
+      {% set least_breaks = measured|map(attribute="summary.policy_violations")|min %}
+      <p class="note" style="margin:0.75rem 0 0;max-width:48rem">Every measured model reached about the same true lift
+        (<span class="num">{{ lifts|min|money }}–{{ lifts|max|money }}</span>): the simulated shoppers react to what the agent
+        <em>does</em> (discount, handoff), not how it words it. So models differ on quality, policy breaks and cost.</p>
+    {% endif %}
+    <div class="table-wrap">
+    <table style="min-width:640px">
+      <thead><tr style="white-space:nowrap"><th>Model</th><th>Price /1M in·out</th><th>Quality</th><th>Policy breaks</th><th>Cost / message</th></tr></thead>
+      <tbody>
+      {% for m in cmp.models %}{% set ms = m.summary %}
+      <tr>
+        <td style="white-space:nowrap"><strong style="font-weight:500">{{ m.model }}</strong>
+          <div class="note" style="margin-top:0.2rem">{% if m.experiment %}<a class="num" href="/experiments/{{ m.experiment.id }}" style="text-decoration:none">run #{{ m.experiment.id }}</a>{% elif m.status == "running" %}Running now{% else %}Not measured yet{% endif %}</div></td>
+        <td class="num muted">{{ m.price_in|per_mtok }} / {{ m.price_out|per_mtok }}</td>
+        {% if ms %}
+        <td><div class="qbar"><div class="bar"><span style="width:{{ ms.avg_quality or 0 }}%"></span></div>
+          <span class="num{{ ' t-success' if ms.avg_quality == best_q }}" style="font-weight:{{ 600 if ms.avg_quality == best_q else 500 }}">{{ ms.avg_quality if ms.avg_quality is not none else "–" }}</span></div></td>
+        <td class="num {{ 't-success' if ms.policy_violations == least_breaks else ('t-danger' if ms.policy_violations >= 4 else '') }}">{{ ms.policy_violations }}</td>
+        <td class="num muted">{{ (ms.agent_cost_usd / ms.conversations)|usd_small if ms.conversations and ms.agent_cost_micros else "–" }}</td>
+        {% else %}
+        <td>{{ dash() }}</td><td>{{ dash() }}</td><td>{{ dash() }}</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
     </div>
 
     <div class="model-foot">
       <p class="num">{{ cmp.runs }} run{{ "" if cmp.runs == 1 else "s" }} · list prices per 1M tokens</p>
-      <p>Each group is one batch on its own axis · Lift / $1 from real-model runs only</p>
+      <p>Quality: 0–100 (rules + AI judge) · Policy breaks out of ~50 messaged shoppers · Cost: the agent's model calls</p>
       {% if gs %}<p class="guarded-only"><span class="ring"></span>Guarded · <span class="num">{{ gs.policy_violations }}</span> policy breaks</p>{% endif %}
     </div>
     <script>

@@ -86,10 +86,10 @@ def test_model_table_shows_prices_and_never_scores_a_model_from_offline_runs():
         # Cheapest first, list prices per 1M tokens (input / output).
         names = ["Haiku", "GPT Luna", "Gemini Flash", "GPT Terra", "Sonnet", "GPT Sol", "Opus", "Gemini Argon",
                  "Fable", "GPT Astra"]
-        where = [table.index(f"<h3>{n}</h3>") for n in names]
+        where = [table.index(f'<strong style="font-weight:500">{n}</strong>') for n in names]
         assert where == sorted(where)
         for price in ("$0.10 / $0.50", "$0.75 / $3.75", "$1 / $5", "$2 / $10", "$4 / $20", "$8 / $40"):
-            assert f'<p class="mt-price num">{price}</p>' in table
+            assert f'<td class="num muted">{price}</td>' in table
         # The strategy rows show the lab's own runs, marked offline. Offline runs never score a
         # model: all ten model rows stay "Not measured yet" (plus pushy, which has not run).
         assert "· offline" in table
@@ -108,7 +108,8 @@ def test_model_table_shows_prices_and_never_scores_a_model_from_offline_runs():
             done_cache(session, "real_models").clear()
         table = model_table(client.get("/experiments").text)
         assert table.count("Not measured yet") == 10
-        assert f'href="/experiments/{sonnet_id}" style="text-decoration:none">Run {sonnet_id:02d}</a>' in table
+        assert f'href="/experiments/{sonnet_id}" style="text-decoration:none">run #{sonnet_id}</a>' in table
+        assert "same true lift" in table and "Policy breaks" in table
 
 
 def test_attribution_lens_shows_real_claimed_and_true_lift_for_the_three_agents():
