@@ -109,7 +109,7 @@ uvicorn app.main:app --reload
 Open http://localhost:8000 and click **Run the demo**, or simulate a store on **Store** and run agents on **Experiments**. Without `DATABASE_URL` the app uses a local SQLite file; `docker compose up -d` and `cp .env.example .env` switch to a local Postgres.
 
 ```bash
-pytest            # 85 tests, all offline
+pytest            # 87 tests, all offline
 ruff check .
 pre-commit install   # optional: run both before every commit
 ```

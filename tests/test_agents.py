@@ -196,6 +196,46 @@ def test_a_model_that_rejects_disabled_thinking_is_retried_and_remembered():
     assert fake.calls[-1]["thinking"]["type"] == "adaptive" and len(fake.calls) == 3  # no second failed try
 
 
+def test_a_model_that_asks_for_between_tools_gets_it_and_it_is_remembered():
+    """Anthropic's Nov 2026 wording: the error names the setting to send instead."""
+    from app.llm import Message
+
+    fake = _FakeAnthropic("Hi Sinister, your Snowboard is saved.")
+    error = ('Error code: 400 - {\'type\': \'error\', \'error\': {\'type\': \'invalid_request_error\', '
+             '\'message\': \'To turn thinking off on this model, send "thinking": {"type": "between_tools"} '
+             'instead of {"type": "disabled"}.\'}}')
+
+    def picky(**kwargs):
+        fake.calls.append(kwargs)
+        if kwargs["thinking"] == {"type": "disabled"}:
+            raise RuntimeError(error)
+        return fake._resp
+
+    fake.messages.create = picky
+    llm = _real_llm(fake)
+    for _ in range(2):
+        assert llm.complete(system="s", messages=[Message("user", "go")], model="claude-haiku-5-5").text
+    assert [c["thinking"]["type"] for c in fake.calls] == ["disabled", "between_tools", "between_tools"]
+    assert fake.calls[-1]["max_tokens"] == 1024  # thinking stays off, so the normal limit
+
+
+def test_an_unrelated_error_is_not_retried():
+    from app.llm import Message
+
+    fake = _FakeAnthropic("x")
+
+    def broken(**kwargs):
+        fake.calls.append(kwargs)
+        raise RuntimeError("Error code: 401 - invalid x-api-key")
+
+    fake.messages.create = broken
+    import pytest
+
+    with pytest.raises(RuntimeError, match="invalid x-api-key"):
+        _real_llm(fake).complete(system="s", messages=[Message("user", "go")], model="claude-haiku-5-5")
+    assert len(fake.calls) == 1
+
+
 def test_a_judge_from_any_provider_is_read_even_inside_a_code_block():
     """Gemini tends to wrap JSON in ```json fences; the judge reply must still be read."""
     from app.evals.scorer import _parse
