@@ -54,14 +54,16 @@
     <form method="post" action="/shopify/draft" class="card" style="margin-top:1.25rem">
       <div style="display:flex;gap:1.25rem;align-items:end;flex-wrap:wrap">
         <label class="field" style="min-width:16rem">Agent
-          <select name="agent_key">{% for key, a in agents.items() %}<option value="{{ key }}">{{ a[0] }}</option>{% endfor %}</select></label>
-        <label class="toggle" style="padding-bottom:0.6rem"><input type="checkbox" name="guardrails" value="true"><span class="track"></span>
+          {# Keep the last run's choices, so trying one model after another doesn't snap back to the first. #}
+          {% set last = shadows[0] if shadows else none %}
+          <select name="agent_key">{% for key, a in agents.items() %}<option value="{{ key }}"{% if last and last.agent_key == key %} selected{% endif %}>{{ a[0] }}</option>{% endfor %}</select></label>
+        <label class="toggle" style="padding-bottom:0.6rem"><input type="checkbox" name="guardrails" value="true"{% if last and last.guardrails %} checked{% endif %}><span class="track"></span>
           <span class="off">Guardrails off</span><span class="on">Guardrails on</span></label>
         <button type="submit" style="margin-left:auto">Draft for every checkout</button>
       </div>
       <p class="note" style="margin:1rem 0 0;padding-top:1rem;border-top:1px solid var(--border)">Writes one opening message per shopper. Nothing leaves Thread.<br>
         {% if draft_mode == "offline" %}Offline mode: drafts are fixed sample lines.
-        {% else %}<span class="t-success">●</span> Written by real Claude models · {{ runs_left }} run{{ "" if runs_left == 1 else "s" }} left today.{% endif %}
+        {% else %}<span class="t-success">●</span> Written by real models · {{ runs_left }} run{{ "" if runs_left == 1 else "s" }} left today.{% endif %}
         Each draft shows what the agent's model call cost at list price.</p>
     </form>
     {% endif %}

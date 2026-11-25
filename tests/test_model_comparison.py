@@ -34,7 +34,7 @@ def test_lift_per_dollar():
     assert s.lift_per_dollar is None
 
 
-def test_compare_models_runs_one_prompt_on_four_models_on_the_same_shoppers():
+def test_compare_models_runs_one_prompt_on_six_models_on_the_same_shoppers():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     db.engine = engine
     db.SessionLocal.configure(bind=engine)
@@ -43,7 +43,7 @@ def test_compare_models_runs_one_prompt_on_four_models_on_the_same_shoppers():
     with TestClient(main.app) as client:
         client.post("/simulate", data={"days": 20})
         page = client.post("/experiments/compare-models", follow_redirects=True).text
-        assert "Compare 4 models" in page and "Model cost" in page and "Lift / $1" in page
+        assert "Compare 6 models" in page and "Model cost" in page and "Lift / $1" in page
 
         with db.SessionLocal() as session:
             exps = session.scalars(select(Experiment).order_by(Experiment.id)).all()
@@ -56,8 +56,10 @@ def test_compare_models_runs_one_prompt_on_four_models_on_the_same_shoppers():
             ]
             assert all(a == arms[0] for a in arms)  # identical shoppers and identical split
 
-            costs = [main.summarize(session, e).agent_cost_micros for e in exps]
+            cost = {e.agent_key: main.summarize(session, e).agent_cost_micros for e in exps}
             # Offline scripts are identical, so the only difference is the price per token.
-            assert 0 < costs[0] < costs[1] < costs[2] < costs[3]
+            assert 0 < cost["baseline-haiku"] < cost["baseline-gemini-flash"] < cost["baseline-sonnet"]
+            assert cost["baseline-sonnet"] < cost["baseline-opus"] < cost["baseline-fable"]
+            assert cost["baseline-gemini-argon"] == cost["baseline-opus"]  # same list price from Dec 1
             held = session.scalars(select(Conversation).where(Conversation.arm == "holdout")).all()
             assert held and all(c.agent_cost_micros == 0 for c in held)  # no message, no cost

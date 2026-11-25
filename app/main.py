@@ -40,7 +40,10 @@ COMPARISON = (("baseline-haiku", False), ("pushy-haiku", False), ("pushy-haiku",
 # One prompt on four models, same shoppers, same holdout split. 100 checkouts with
 # a 50% holdout means about 50 messaged shoppers per model: around $4 in total
 # with real models (mostly Opus and Fable), free offline.
-MODEL_COMPARISON = ("baseline-haiku", "baseline-sonnet", "baseline-opus", "baseline-fable")
+MODEL_COMPARISON = (
+    "baseline-haiku", "baseline-sonnet", "baseline-opus", "baseline-fable",
+    "baseline-gemini-flash", "baseline-gemini-argon",
+)
 MODEL_COMPARISON_CHECKOUTS = 100
 MODEL_COMPARISON_HOLDOUT_PCT = 50
 DEMO_DAYS = 180
