@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ app_name }} · {% block title %}{% endblock %}</title>
   <meta name="description" content="A test lab for AI sales agents: simulated shoppers, scored conversations, measured lift.">
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  {% if has_favicon_png %}<link rel="icon" href="/static/favicon.png" type="image/png">{% else %}<link rel="icon" href="/favicon.svg" type="image/svg+xml">{% endif %}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..600;1,9..144,400..600&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -13,12 +13,14 @@
   <style>
     /* Warm paper, ink text, one vermilion accent. Green = true lift, red = policy breaks. */
     :root {
-      --background: oklch(0.975 0.008 85); --foreground: oklch(0.2 0.015 60);
-      --card: oklch(0.995 0.004 85); --primary: oklch(0.6 0.19 38); --primary-fg: oklch(0.99 0.005 85);
-      --secondary: oklch(0.93 0.012 85); --muted: oklch(0.94 0.01 85); --muted-fg: oklch(0.5 0.015 60);
-      --accent: oklch(0.94 0.045 50); --accent-fg: oklch(0.45 0.15 38);
+      /* Workshop: linen paper, wood and brass accents. Vermilion, ink and green unchanged. */
+      --background: oklch(0.96 0.018 80); --foreground: oklch(0.2 0.015 60);
+      --card: oklch(0.985 0.012 82); --primary: oklch(0.6 0.19 38); --primary-fg: oklch(0.99 0.005 85);
+      --secondary: oklch(0.915 0.025 75); --muted: oklch(0.94 0.01 85); --muted-fg: oklch(0.5 0.015 60);
+      --accent: oklch(0.92 0.05 70); --accent-fg: oklch(0.45 0.15 38);
       --destructive: oklch(0.55 0.2 27); --success: oklch(0.52 0.12 155); --warning: oklch(0.6 0.14 75);
-      --border: oklch(0.88 0.012 80); --input: oklch(0.86 0.012 80);
+      --border: oklch(0.85 0.025 70); --input: oklch(0.86 0.012 80);
+      --wood: oklch(0.55 0.09 55); --brass: oklch(0.72 0.11 80);
       --ink: oklch(0.2 0.015 60); --ink-fg: oklch(0.96 0.01 85);
       --sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
       --display: "Fraunces", ui-serif, Georgia, serif;
@@ -26,7 +28,11 @@
       --radius: 0.5rem;
     }
     * { box-sizing: border-box; border-color: var(--border); }
-    body { margin: 0; background: var(--background); color: var(--foreground); font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+    body { margin: 0; background: var(--background); color: var(--foreground); font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased;
+      /* Faint linen weave: wood threads at 4% opacity, 4px pitch, both directions */
+      background-image: repeating-linear-gradient(0deg, color-mix(in oklab, var(--wood) 4%, transparent) 0 1px, transparent 1px 4px),
+        repeating-linear-gradient(90deg, color-mix(in oklab, var(--wood) 4%, transparent) 0 1px, transparent 1px 4px); }
+    ::selection { background: color-mix(in oklab, var(--brass) 40%, transparent); }
     a { color: inherit; }
     .wrap { max-width: 72rem; margin: 0 auto; padding: 0 1.5rem; }
     .page { padding-top: 3rem; padding-bottom: 4rem; }
@@ -49,8 +55,8 @@
     .crumbs a { text-decoration: none; } .crumbs a:hover { color: var(--primary); }
 
     /* Header and footer */
-    .site-header { position: sticky; top: 0; z-index: 20; border-bottom: 1px solid var(--border); background: color-mix(in oklch, var(--background) 85%, transparent); backdrop-filter: blur(8px); }
-    .site-header .wrap { height: 3.5rem; display: flex; align-items: center; justify-content: space-between; }
+    .site-header { position: sticky; top: 0; z-index: 20; border-bottom: 2px dashed color-mix(in oklab, var(--primary) 55%, transparent); background: color-mix(in oklch, var(--background) 85%, transparent); backdrop-filter: blur(8px); }
+    .site-header .wrap { height: 4rem; display: flex; align-items: center; justify-content: space-between; }
     .brand { display: flex; align-items: center; gap: 0.5rem; text-decoration: none; }
     .brand-mark { width: 1.75rem; height: 1.75rem; display: grid; place-items: center; border-radius: 0.375rem; background: var(--ink); color: var(--ink-fg); font-family: var(--display); font-size: 0.875rem; }
     .brand-name { font-family: var(--display); font-size: 1.125rem; font-weight: 600; letter-spacing: -0.02em; }
@@ -59,7 +65,8 @@
     .nav a:hover, .nav a.active { background: var(--secondary); color: var(--foreground); }
     .nav a.repo { margin-left: 0.5rem; border: 1px solid var(--border); background: var(--card); color: var(--foreground); }
     @media (max-width: 1023px) { .nav a.live { display: none; } }
-    .site-footer { border-top: 1px solid var(--border); }
+    .site-footer { border-top: 2px dashed color-mix(in oklab, var(--primary) 55%, transparent); }
+    .brand-logo { width: 40px; height: 40px; filter: drop-shadow(0 1px 1px rgb(0 0 0 / .12)); }
     .site-footer .wrap { padding-top: 2rem; padding-bottom: 2rem; font-size: 0.875rem; color: var(--muted-fg); }
     @media (max-width: 640px) {
       .nav a.repo { display: none; }
@@ -95,6 +102,9 @@
 
     /* Surfaces */
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1.5rem; }
+    /* Thin brass inner ring on framed surfaces */
+    .card, .table-wrap, .stat-grid { box-shadow: inset 0 0 0 4px var(--card), inset 0 0 0 5px color-mix(in oklab, var(--brass) 45%, transparent),
+      0 8px 24px -16px color-mix(in oklab, var(--wood) 60%, transparent); }
     .card-ink { background: var(--ink); color: var(--ink-fg); border-radius: 0.75rem; padding: 1.5rem; display: flex; flex-direction: column; justify-content: space-between; }
     .card-ink .eyebrow { color: var(--ink-fg); opacity: .6; }
     /* Joined cells; the dividers are shadows, so a part-filled last row stays clean */
@@ -251,7 +261,7 @@
 <header class="site-header">
   <div class="wrap">
     <a href="/" class="brand">
-      <span class="brand-mark">T</span><span class="brand-name">{{ app_name }}</span>
+      {% if has_logo %}<img class="brand-logo" src="/static/thread-logo.png" alt="Thread logo" width="40" height="40">{% else %}<span class="brand-mark">T</span>{% endif %}<span class="brand-name">{{ app_name }}</span>
     </a>
     <nav class="nav">
       <a href="/" class="home {{ 'active' if path == '/' }}">Overview</a>

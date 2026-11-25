@@ -11,6 +11,7 @@ from urllib.parse import quote
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
@@ -28,6 +29,9 @@ from app.shoppers import PERSONAS
 from app.simulator import SimConfig, run_simulation
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+# The emblem and tab icon live in app/static. Until they are added, the header keeps the "T"
+# mark and the tab keeps the SVG icon, so a missing file never shows as a broken image.
+STATIC_DIR = Path(__file__).parent / "static"
 templates.env.filters["money"] = lambda cents: f"{'−' if cents < 0 else ''}${abs(cents) / 100:,.0f}"
 # List price per 1M tokens: "$0.10", "$0.75", "$2", "$40".
 templates.env.filters["per_mtok"] = lambda usd: f"${usd:,.0f}" if usd == int(usd) else f"${usd:,.2f}"
@@ -36,6 +40,8 @@ templates.env.globals.update(
     agents=AGENTS,
     personas={p.key: p for p in PERSONAS},
     repo_url=os.getenv("REPO_URL", "https://github.com/SinisterSimon/Thread_SinisterSimon"),
+    has_logo=(STATIC_DIR / "thread-logo.png").is_file(),
+    has_favicon_png=(STATIC_DIR / "favicon.png").is_file(),
 )
 
 # The agents compared by "Run all agents" and the demo: the good one, the bad one,
@@ -73,6 +79,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title=APP_NAME, lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 log = logging.getLogger("thread")

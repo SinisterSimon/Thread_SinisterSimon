@@ -139,3 +139,21 @@ def test_building_banner_shows_while_a_store_is_simulating():
             assert "Building a new store" in page and 'http-equiv="refresh"' in page
     finally:
         main._mark_building(-1)
+
+
+def test_header_shows_the_emblem_only_when_the_file_exists():
+    import app.main as main
+
+    with TestClient(main.app) as client:
+        env = main.templates.env.globals
+        saved = env["has_logo"], env["has_favicon_png"]
+        try:
+            env["has_logo"] = env["has_favicon_png"] = False
+            page = client.get("/").text
+            assert 'class="brand-mark">T</span>' in page and 'href="/favicon.svg"' in page  # no broken image
+            env["has_logo"] = env["has_favicon_png"] = True
+            page = client.get("/").text
+            assert 'src="/static/thread-logo.png" alt="Thread logo" width="40" height="40"' in page
+            assert '<link rel="icon" href="/static/favicon.png" type="image/png">' in page
+        finally:
+            env["has_logo"], env["has_favicon_png"] = saved
