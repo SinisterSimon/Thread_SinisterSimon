@@ -106,6 +106,10 @@ AGENTS = {
     "baseline-fable": ("Baseline · Fable", "claude-fable-5-2", BASELINE_RULES, _baseline_script),
     "baseline-gemini-flash": ("Baseline · Gemini Flash", "gemini-3.8-flash", BASELINE_RULES, _baseline_script),
     "baseline-gemini-argon": ("Baseline · Gemini Argon", "gemini-4-argon", BASELINE_RULES, _baseline_script),
+    "baseline-gpt-luna": ("Baseline · GPT Luna", "gpt-6-luna", BASELINE_RULES, _baseline_script),
+    "baseline-gpt-terra": ("Baseline · GPT Terra", "gpt-6.1-terra", BASELINE_RULES, _baseline_script),
+    "baseline-gpt-sol": ("Baseline · GPT Sol", "gpt-6.2-sol", BASELINE_RULES, _baseline_script),
+    "baseline-gpt-astra": ("Baseline · GPT Astra", "gpt-6.2-astra", BASELINE_RULES, _baseline_script),
     "pushy-haiku": ("Pushy discounter · Haiku", "claude-haiku-5-5", PUSHY_RULES, _pushy_script),
 }
 

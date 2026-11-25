@@ -16,6 +16,11 @@ PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
     "gemini-3.8-flash": (0.75, 3.75),
     # Promotional price through Nov 30, 2026 is $2 / $10; this is the price from Dec 1.
     "gemini-4-argon": (4.00, 20.00),
+    # OpenAI list prices, Nov 2026. Reasoning tokens are billed as output (OpenAILLM counts them).
+    "gpt-6-luna": (0.10, 0.50),
+    "gpt-6.1-terra": (1.00, 5.00),
+    "gpt-6.2-sol": (2.00, 10.00),
+    "gpt-6.2-astra": (8.00, 40.00),
 }
 
 

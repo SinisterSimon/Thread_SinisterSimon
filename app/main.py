@@ -65,7 +65,9 @@ COMPARISON = (("baseline-haiku", False), ("pushy-haiku", False), ("pushy-haiku",
 MODEL_COMPARISON = (
     "baseline-haiku", "baseline-sonnet", "baseline-opus", "baseline-fable",
     "baseline-gemini-flash", "baseline-gemini-argon",
+    "baseline-gpt-luna", "baseline-gpt-terra", "baseline-gpt-sol", "baseline-gpt-astra",
 )
+templates.env.globals["comparison_size"] = len(MODEL_COMPARISON)
 MODEL_COMPARISON_CHECKOUTS = 100
 CONVERSATIONS_PER_PAGE = 50  # a run page lists conversations 50 at a time, not all ~1,600
 MODEL_COMPARISON_HOLDOUT_PCT = 50

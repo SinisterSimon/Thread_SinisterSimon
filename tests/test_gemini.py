@@ -167,3 +167,62 @@ def test_gemini_failures_become_one_plain_sentence_not_a_crashed_run():
     with pytest.raises(LLMError, match="isn't available on the Gemini free tier; turn on billing"):
         llm.complete(system="s", messages=[Message("user", "go")], model="gemini-4-argon")
     assert len(fake.calls) == 1
+
+
+# --- OpenAI, behind the same contract ---------------------------------------------------------
+
+def _openai(responses):
+    pytest.importorskip("openai")
+    from app.llm.client import OpenAILLM
+
+    llm = OpenAILLM(api_key="test")
+    calls = []
+    queue = list(responses)
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        item = queue.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    llm._client = NS(responses=NS(create=create))
+    llm._sleep = lambda _s: None
+    return llm, calls
+
+
+def _oa(text, status="completed", reason=None):
+    return NS(status=status, incomplete_details=NS(reason=reason), output_text=text,
+              usage=NS(input_tokens=100, output_tokens=40))
+
+
+def test_openai_answers_retries_and_explains_in_plain_words():
+    llm, calls = _openai([RuntimeError("Error code: 503 - overloaded"), _oa("Your Snowboard is saved.")])
+    reply = llm.complete(system="rules <<OFFLINE_REPLY>> x", messages=[Message("user", "go")], model="gpt-6-luna")
+    assert (reply.text, reply.input_tokens, reply.output_tokens) == ("Your Snowboard is saved.", 100, 40)
+    assert len(calls) == 2 and "OFFLINE_REPLY" not in calls[1]["instructions"]
+    assert calls[1]["reasoning"] == {"effort": "low"}
+
+    llm, calls = _openai([RuntimeError("Error code: 429 - {'error': {'code': 'insufficient_quota'}}")])
+    with pytest.raises(LLMError, match="no credit left; add credits"):
+        llm.complete(system="s", messages=[Message("user", "go")], model="gpt-6.2-sol")
+    assert len(calls) == 1  # no point waiting when the account is empty
+
+    for resp, why in [(_oa("Cut", "incomplete", "max_output_tokens"), "token limit"), (_oa(""), "no text")]:
+        llm, _ = _openai([resp])
+        with pytest.raises(LLMError, match=why):
+            llm.complete(system="s", messages=[Message("user", "go")], model="gpt-6-luna")
+
+
+def test_an_openai_model_without_reasoning_settings_is_retried_without_them():
+    llm, calls = _openai([RuntimeError("Unsupported parameter: 'reasoning.effort'"), _oa("Saved."), _oa("Saved.")])
+    for _ in range(2):
+        llm.complete(system="s", messages=[Message("user", "go")], model="gpt-old")
+    assert ["reasoning" in c for c in calls] == [True, False, False]
+
+
+def test_gpt_models_route_to_openai_and_are_priced():
+    from app.llm.client import PROVIDERS, OpenAILLM
+
+    assert PROVIDERS["gpt-"] == (OpenAILLM, "OPENAI_API_KEY")
+    assert cost_micros("gpt-6.2-astra", 1_000_000, 1_000_000) == 48_000_000  # $8 + $40
