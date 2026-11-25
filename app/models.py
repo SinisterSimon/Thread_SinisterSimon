@@ -204,6 +204,9 @@ class Conversation(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     # Phase 3: how many agent messages the guardrails had to change.
     guardrail_fixes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # What the agent's own model calls cost at list price (micro-dollars). Excludes the
+    # shopper bot and the judge: those are lab overhead, not what a store would pay.
+    agent_cost_micros: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     experiment: Mapped[Experiment] = relationship(back_populates="conversations")
     score: Mapped["ConversationScore | None"] = relationship(

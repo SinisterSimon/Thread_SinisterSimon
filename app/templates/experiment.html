@@ -41,6 +41,8 @@
     <p class="note">every purchase after a message</p></div>
   <div><p class="eyebrow">True lift</p><div class="value t-success">{{ s.caused_revenue_cents|money }}</div>
     <p class="note">{{ s.anyway_revenue_cents|money }} would have come anyway, at full price</p></div>
+  <div><p class="eyebrow">Model cost</p><div class="value">{{ s.agent_cost_usd|usd_small }}</div>
+    <p class="note">{% if s.lift_per_dollar is not none %}${{ "{:,.0f}".format(s.lift_per_dollar) }} true lift per $1{% else %}agent calls at list price{% endif %}</p></div>
   <div><p class="eyebrow">Handoffs / discounts</p><div class="value">{{ s.handoffs }} / {{ s.discounted }}</div></div>
   <div><p class="eyebrow">Quality</p><div class="value">{{ s.avg_quality if s.avg_quality is not none else "–" }}</div>
     <p class="note">out of 100: rules + AI judge</p></div>

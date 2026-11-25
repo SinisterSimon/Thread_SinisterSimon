@@ -82,6 +82,8 @@ class PromptAgent:
 AGENTS = {
     "baseline-haiku": ("Baseline · Haiku", "claude-haiku-5-5", BASELINE_RULES, _baseline_script),
     "baseline-sonnet": ("Baseline · Sonnet", "claude-sonnet-5-5", BASELINE_RULES, _baseline_script),
+    "baseline-opus": ("Baseline · Opus", "claude-opus-5-5", BASELINE_RULES, _baseline_script),
+    "baseline-fable": ("Baseline · Fable", "claude-fable-5-2", BASELINE_RULES, _baseline_script),
     "pushy-haiku": ("Pushy discounter · Haiku", "claude-haiku-5-5", PUSHY_RULES, _pushy_script),
 }
 
