@@ -1,8 +1,10 @@
-"""LLM clients: a free offline stand-in and the real Anthropic API.
+"""LLM clients: a free offline stand-in and real models from Anthropic and Google.
 
 Pick one with the LLM_MODE environment variable:
 - "offline" (default): scripted replies, no network, no cost
-- "anthropic": real Claude models, needs ANTHROPIC_API_KEY
+- "live" (or its older name "anthropic"): real models. Each call goes to the
+  provider that owns the model name: claude-* to Anthropic (ANTHROPIC_API_KEY),
+  gemini-* to Google (GEMINI_API_KEY). A key is only needed for the models used.
 """
 import os
 from dataclasses import dataclass
@@ -134,6 +136,111 @@ class AnthropicLLM:
         )
 
 
+class GeminiLLM:
+    """Google's Gemini models through the google-genai SDK.
+
+    Same contract as AnthropicLLM: one short text, or an LLMError saying why not.
+    Gemini 3.x models think before answering; thinking_level "low" keeps that short.
+    Thinking tokens are billed as output, so they are counted in output_tokens and
+    show up in the cost. A model that rejects thinking_level is retried without it
+    and remembered, like the Anthropic retry.
+    """
+
+    MAX_TOKENS = 4096  # room for short thinking plus a one- or two-sentence reply
+    BLOCKED = {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION"}
+
+    def __init__(self, api_key: str):
+        from google import genai  # imported lazily so offline mode needs no SDK
+
+        self._client = genai.Client(api_key=api_key)
+        self._no_thinking_level: set[str] = set()
+
+    def _config(self, model: str, system: str):
+        from google.genai import types
+
+        thinking = None if model in self._no_thinking_level else types.ThinkingConfig(thinking_level="low")
+        return types.GenerateContentConfig(
+            system_instruction=system, max_output_tokens=self.MAX_TOKENS, thinking_config=thinking
+        )
+
+    def _generate(self, model: str, system: str, messages: list[Message]):
+        from google.genai import types
+
+        # Gemini calls the assistant side "model".
+        contents = [
+            types.Content(role="model" if m.role == "assistant" else "user", parts=[types.Part(text=m.text)])
+            for m in messages
+        ]
+        try:
+            return self._client.models.generate_content(
+                model=model, contents=contents, config=self._config(model, system)
+            )
+        except Exception as err:
+            if "thinking" not in str(err).lower() or model in self._no_thinking_level:
+                raise
+            self._no_thinking_level.add(model)
+            return self._client.models.generate_content(
+                model=model, contents=contents, config=self._config(model, system)
+            )
+
+    def complete(self, *, system: str, messages: list[Message], model: str) -> LLMReply:
+        system = system.split(OfflineLLM.MARKER, 1)[0]  # never send offline scripts
+        resp = self._generate(model, system, messages)
+        candidate = resp.candidates[0] if resp.candidates else None
+        reason = getattr(getattr(candidate, "finish_reason", None), "name", None) or "none"
+        parts = (candidate.content.parts or []) if candidate and candidate.content else []
+        text = "".join(p.text or "" for p in parts if not getattr(p, "thought", False))
+        if reason == "MAX_TOKENS":
+            raise LLMError(f"{model} hit the {self.MAX_TOKENS}-token limit; the reply would be cut off")
+        if reason in self.BLOCKED or candidate is None:
+            raise LLMError(f"{model} declined to write this message (finish reason: {reason})")
+        if not text.strip():
+            raise LLMError(f"{model} returned no text (finish reason: {reason})")
+        usage = resp.usage_metadata
+        return LLMReply(
+            text=text.strip(),
+            model=model,
+            input_tokens=usage.prompt_token_count or 0,
+            output_tokens=(usage.candidates_token_count or 0) + (usage.thoughts_token_count or 0),
+        )
+
+
+PROVIDERS = {
+    # model-name prefix: (client class, env var holding its key)
+    "claude-": (AnthropicLLM, "ANTHROPIC_API_KEY"),
+    "gemini-": (GeminiLLM, "GEMINI_API_KEY"),
+}
+
+
+class RoutedLLM:
+    """Sends each call to the provider that owns the model, creating clients on first use.
+
+    A missing key fails only the calls that need it, as an LLMError: a Gemini
+    draft without GEMINI_API_KEY shows "(No draft: ...)" while Claude drafts work.
+    """
+
+    def __init__(self):
+        self._clients: dict[str, LLM] = {}
+
+    def _client_for(self, model: str) -> LLM:
+        prefix = next((p for p in PROVIDERS if model.startswith(p)), None)
+        if prefix is None:
+            raise LLMError(f"no provider for model {model!r}; known prefixes: {', '.join(PROVIDERS)}")
+        if prefix not in self._clients:
+            cls, env = PROVIDERS[prefix]
+            key = os.getenv(env)
+            if not key:
+                raise LLMError(f"{model} needs {env}")
+            self._clients[prefix] = cls(key)
+        return self._clients[prefix]
+
+    def complete(self, *, system: str, messages: list[Message], model: str) -> LLMReply:
+        return self._client_for(model).complete(system=system, messages=messages, model=model)
+
+
+LIVE_MODES = {"live", "anthropic"}  # "anthropic" is the older name, kept so existing settings work
+
+
 def mode_for(shadow: bool = False) -> str:
     """Which model mode a run uses.
 
@@ -148,10 +255,4 @@ def mode_for(shadow: bool = False) -> str:
 
 
 def get_llm(shadow: bool = False) -> LLM:
-    mode = mode_for(shadow)
-    if mode == "anthropic":
-        key = os.getenv("ANTHROPIC_API_KEY")
-        if not key:
-            raise RuntimeError("anthropic mode needs ANTHROPIC_API_KEY")
-        return AnthropicLLM(key)
-    return OfflineLLM()
+    return RoutedLLM() if mode_for(shadow) in LIVE_MODES else OfflineLLM()

@@ -11,6 +11,11 @@ PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-sonnet-5-5": (2.00, 10.00),
     "claude-opus-5-5": (4.00, 20.00),
     "claude-fable-5-2": (8.00, 40.00),
+    # Gemini output prices include thinking tokens (GeminiLLM counts them as output).
+    # Introductory price through Dec 31, 2026; $1.50 / $7.50 from Jan 1, 2027.
+    "gemini-3.8-flash": (0.75, 3.75),
+    # Promotional price through Nov 30, 2026 is $2 / $10; this is the price from Dec 1.
+    "gemini-4-argon": (4.00, 20.00),
 }
 
 

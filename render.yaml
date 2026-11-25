@@ -12,11 +12,13 @@ services:
         sync: false
       - key: LLM_MODE
         value: offline
-      # Shadow drafts on the Live store can use real Claude while the lab stays offline.
-      # Set to "anthropic" (with ANTHROPIC_API_KEY) to turn it on; capped per day in app/main.py.
+      # Shadow drafts on the Live store can use real models while the lab stays offline.
+      # Set to "live" (or "anthropic") with the API keys to turn it on; capped per day in app/main.py.
       - key: DRAFT_LLM_MODE
         value: offline
       - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
         sync: false
       - key: WORKER_ENABLED
         value: "0"

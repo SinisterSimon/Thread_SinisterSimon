@@ -2,7 +2,7 @@
 
 `baseline` is the agent we actually want to be good. `pushy` is a deliberately
 worse strategy (big discounts, never hands off) so experiments have something
-to compare against. The same prompt on two models shows whether a pricier
+to compare against. The same prompt on several models (Claude and Gemini) shows whether a pricier
 model is worth it.
 """
 from dataclasses import dataclass
@@ -84,6 +84,8 @@ AGENTS = {
     "baseline-sonnet": ("Baseline · Sonnet", "claude-sonnet-5-5", BASELINE_RULES, _baseline_script),
     "baseline-opus": ("Baseline · Opus", "claude-opus-5-5", BASELINE_RULES, _baseline_script),
     "baseline-fable": ("Baseline · Fable", "claude-fable-5-2", BASELINE_RULES, _baseline_script),
+    "baseline-gemini-flash": ("Baseline · Gemini Flash", "gemini-3.8-flash", BASELINE_RULES, _baseline_script),
+    "baseline-gemini-argon": ("Baseline · Gemini Argon", "gemini-4-argon", BASELINE_RULES, _baseline_script),
     "pushy-haiku": ("Pushy discounter · Haiku", "claude-haiku-5-5", PUSHY_RULES, _pushy_script),
 }
 

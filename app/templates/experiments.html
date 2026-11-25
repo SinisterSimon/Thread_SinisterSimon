@@ -42,13 +42,13 @@
   <form method="post" action="/experiments/compare-models" class="card" style="margin-top:1rem;display:flex;gap:1.5rem;align-items:center;justify-content:space-between;flex-wrap:wrap">
     <div style="max-width:44rem">
       <p class="eyebrow">Compare models</p>
-      <p style="margin:0.5rem 0 0;font-size:0.9rem">The same baseline prompt on <strong>Haiku, Sonnet, Opus and Fable</strong>: same shoppers, same 50% holdout.
+      <p style="margin:0.5rem 0 0;font-size:0.9rem">The same baseline prompt on <strong>Claude Haiku, Sonnet, Opus and Fable</strong> and <strong>Gemini Flash and Argon</strong>: same shoppers, same 50% holdout.
         Does a pricier model earn back its cost in true lift?</p>
-      <p class="note" style="margin:0.4rem 0 0">{% if lab_mode == "offline" %}Offline mode: free, but scripted, so all four models answer the same.
-        Set <code>LLM_MODE=anthropic</code> for a real comparison.{% else %}Real models: about $4 for ~50 messaged shoppers per model, mostly Opus and Fable.{% endif %}
+      <p class="note" style="margin:0.4rem 0 0">{% if lab_mode == "offline" %}Offline mode: free, but scripted, so all six models answer the same.
+        Set <code>LLM_MODE=live</code> for a real comparison.{% else %}Real models: about $5 for ~50 messaged shoppers per model, mostly Opus, Fable and Argon. Gemini rows need <code>GEMINI_API_KEY</code>.{% endif %}
         With ~50 shoppers per model the lift ranges are wide: expect it to show costs clearly and lift differences only if they are large.</p>
     </div>
-    <button type="submit" class="btn-outline">Compare 4 models →</button>
+    <button type="submit" class="btn-outline">Compare 6 models →</button>
   </form>
 
   <div class="section-head">

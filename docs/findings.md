@@ -2,7 +2,7 @@
 
 **Counting every sale after a message overstated what the messages caused by 1.6–4.7×, and a randomized holdout group recovered the real effect.** A polite agent that answers the shopper's actual question caused about three times the real revenue of one that offers 20% off to everyone. Guardrails stopped the bad agent from breaking policy but did not make it effective.
 
-All results come from Thread's offline mode: simulated shoppers and scripted agents, so every number is reproducible with `pytest` and the seeds below. Real models (`LLM_MODE=anthropic`) will change the scores; the measurement method stays the same.
+All results come from Thread's offline mode: simulated shoppers and scripted agents, so every number is reproducible with `pytest` and the seeds below. Real models (`LLM_MODE=live`) will change the scores; the measurement method stays the same.
 
 ## Setup
 

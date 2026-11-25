@@ -142,6 +142,12 @@ def test_shadow_mode_drafts_without_sending(monkeypatch):
         page = client.post("/shopify/draft", data={"agent_key": "pushy-haiku", "guardrails": "true"},
                            follow_redirects=True).text
         assert "guardrails changed" in page
+        # The form keeps the last run's agent and guardrails, instead of snapping back to Haiku.
+        assert '<option value="pushy-haiku" selected>' in page
+        assert 'name="guardrails" value="true" checked>' in page
+        page = client.post("/shopify/draft", data={"agent_key": "baseline-gemini-flash"}, follow_redirects=True).text
+        assert '<option value="baseline-gemini-flash" selected>' in page
+        assert 'name="guardrails" value="true" checked>' not in page
         # The simulated lab is untouched.
         assert "Simulate a store first" in client.get("/experiments").text
 
