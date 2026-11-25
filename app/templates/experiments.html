@@ -132,8 +132,9 @@
       {% set best_q = measured|map(attribute="summary.avg_quality")|select("number")|max %}
       {% set least_breaks = measured|map(attribute="summary.policy_violations")|min %}
       <p class="note" style="margin:0.75rem 0 0;max-width:48rem">Every measured model reached about the same true lift
-        (<span class="num">{{ lifts|min|money }}–{{ lifts|max|money }}</span>): the simulated shoppers react to what the agent
-        <em>does</em> (discount, handoff), not how it words it. So models differ on quality, policy breaks and cost.</p>
+        (<span class="num">{{ lifts|min|money }}–{{ lifts|max|money }}</span>): a simulated shopper buys when the agent addresses
+        their concern and makes the right call (discount, handoff), a bar every capable model clears in the same conversations.
+        So models differ on quality, policy breaks and cost.</p>
     {% endif %}
     <div class="table-wrap">
     <table style="min-width:640px">
