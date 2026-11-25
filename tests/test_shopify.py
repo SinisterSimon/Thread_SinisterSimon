@@ -22,6 +22,7 @@ def _checkout(n: int, email: str, phone: str | None = None, completed: bool = Fa
     return {
         "id": f"gid://shopify/AbandonedCheckout/{n}",
         "name": f"#{n}",
+        "abandonedCheckoutUrl": f"https://thread-dev.myshopify.com/checkouts/{n}/recover?key=k{n}",
         "createdAt": "2026-11-24T20:18:00Z",
         "updatedAt": "2026-11-24T20:20:00Z",
         "completedAt": "2026-11-24T21:00:00Z" if completed else None,
@@ -224,3 +225,47 @@ def test_live_store_shows_what_each_draft_cost(monkeypatch):
         client.post("/shopify/sync")
         page = client.post("/shopify/draft", data={"agent_key": "baseline-fable"}, follow_redirects=True).text
         assert "Baseline · Fable" in page and "$0.00" in page  # fractions of a cent, shown with enough digits
+
+
+def test_drafts_end_with_the_real_checkout_link_and_use_clean_names(session, monkeypatch):
+    """The link comes from Shopify and is appended by Thread, so the model can't invent or mistype it."""
+    from app.experiments import create_experiment, run_experiment
+    from app.llm.client import OfflineLLM
+    from app.models import Conversation
+
+    nodes = [dict(c) for c in CHECKOUTS]
+    nodes[0]["customer"] = dict(nodes[0]["customer"], firstName="sinister")
+    client = fake_shopify()[0]
+    monkeypatch.setattr("app.shopify.sync.fetch_abandoned_checkouts", lambda _c: nodes)
+    store_id = sync_store(session, client).store_id
+    exp = create_experiment(session, store_id, "baseline-haiku", 50, shadow=True)
+    run_experiment(session, exp, OfflineLLM())
+    ext = dict(session.execute(select(Checkout.id, Checkout.external_id)).all())
+    drafts = {ext[c.checkout_id]: c.messages[0].text for c in session.scalars(select(Conversation))}
+    first = drafts["gid://shopify/AbandonedCheckout/1"]
+    assert first.startswith("Hi Sinister, your Compare at Price Snowboard is still saved at thread-dev.")
+    assert first.endswith(" https://thread-dev.myshopify.com/checkouts/1/recover?key=k1")
+
+
+def test_cleaning_names_titles_and_store_facts(monkeypatch):
+    from app.experiments.runner import STORE_FACTS, clean_name, clean_title, store_facts
+
+    assert [clean_name(n) for n in ("sinister", "WINNIE", "McKay", "", "there")] == [
+        "Sinister", "Winnie", "McKay", "there", "there"]
+    assert clean_title("The Multi-location Snowboard") == "Multi-location Snowboard"
+    assert clean_title("Theory Jacket") == "Theory Jacket"
+    shop, lab = Store(source="shopify"), Store(source="simulated")
+    monkeypatch.setenv("SHOPIFY_STORE_FACTS", "Free shipping over $100 | Ships from Tallinn")
+    assert store_facts(shop) == ["Free shipping over $100", "Ships from Tallinn"]
+    assert store_facts(lab) == STORE_FACTS  # the lab always uses its own facts
+
+
+def test_opening_rules_and_link_note_reach_the_model():
+    from app.agents.base import AgentContext
+    from app.agents.registry import BASELINE_RULES, _context_block
+
+    assert "At most 120 characters" in BASELINE_RULES and "never write a URL" in BASELINE_RULES
+    ctx = AgentContext("Thread Snow Co.", "Sinister", ["1 x Snowboard ($700)"], "$700", ["Free returns"],
+                       checkout_url="https://x/recover")
+    assert "Thread adds it after your first text" in _context_block(ctx)
+    assert "Checkout link" not in _context_block(AgentContext("S", "A", [], "$0"))

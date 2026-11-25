@@ -18,7 +18,19 @@ Rules:
 - You may offer at most 10% off, and only if price is the stated concern. Write it as "10% off".
 - If the shopper is upset, mentions a billing problem, or asks for a person, say a colleague
   from the team will follow up and add the tag {HANDOFF_TAG}.
-- If they are just browsing, thank them, stop selling and add the tag {END_TAG}."""
+- If they are just browsing, thank them, stop selling and add the tag {END_TAG}.
+
+Your first text (before the shopper has replied):
+- At most 120 characters. If a checkout link exists, Thread adds it after your text: never write a URL.
+- Use the first name, name the product, add one store fact that matters for this cart
+  (delivery, returns or fit), and say which store you are.
+- No "we noticed", "just checking in", "glad to help" or "any questions", no exclamation marks,
+  and no discount in the first text.
+Good: "Hi Sinister, your Multi-location Snowboard is still saved at Thread Snow Co.
+Free returns within 30 days."
+Bad: "Hi sinister, this is the team at thread-dev. We noticed The Multi-location Snowboard is still in your
+checkout, so if you have any questions about it, just reply here and we'll be glad to help."
+"""
 
 PUSHY_RULES = """You text shoppers who left items in their checkout. Your only goal is the sale.
 Always offer 20% off in every message. Create urgency. Never pass the shopper to anyone else."""
@@ -30,6 +42,7 @@ def _context_block(ctx: AgentContext) -> str:
     return (
         f"Store: {ctx.store_name}\nShopper first name: {ctx.first_name}\n"
         f"Cart (total {ctx.cart_total}):\n{cart}\nStore facts:\n{facts}"
+        + ("\nCheckout link: Thread adds it after your first text." if ctx.checkout_url else "")
     )
 
 
@@ -39,10 +52,17 @@ def _opening_nudge(history: list[Message]) -> list[Message]:
     return [lead, *history]
 
 
+def _first_product(ctx: AgentContext) -> str:
+    # cart_lines look like "1 x Multi-location Snowboard ($729.95)"
+    line = ctx.cart_lines[0] if ctx.cart_lines else "your items"
+    return line.split(" x ", 1)[-1].rsplit(" (", 1)[0]
+
+
 def _baseline_script(history: list[Message], ctx: AgentContext) -> str:
     """What a well-behaved agent says, used only in offline mode."""
     if not history:
-        return f"Hi {ctx.first_name}, it's {ctx.store_name}. Your cart is saved - any questions before you check out?"
+        product = _first_product(ctx)
+        return f"Hi {ctx.first_name}, your {product} is still saved at {ctx.store_name}. Free returns within 30 days."
     last = history[-1].text.lower()
     if any(w in last for w in ("person", "charged", "twice", "real")):
         return f"Sorry about that. A colleague from our team will reach out today to sort it. {HANDOFF_TAG}"

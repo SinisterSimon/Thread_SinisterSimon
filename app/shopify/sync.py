@@ -28,6 +28,7 @@ query AbandonedCheckouts($cursor: String) {
     nodes {
       id
       name
+      abandonedCheckoutUrl
       createdAt
       updatedAt
       completedAt
@@ -154,6 +155,7 @@ def sync_store(session: Session, client: ShopifyClient) -> SyncResult:
             select(Checkout).where(Checkout.store_id == store.id, Checkout.external_id == node["id"])
         ).first()
         if existing is not None:
+            existing.recovery_url = (node.get("abandonedCheckoutUrl") or "")[:500] or existing.recovery_url
             if existing.status != status:
                 existing.status = status
                 updated += 1
@@ -167,6 +169,7 @@ def sync_store(session: Session, client: ShopifyClient) -> SyncResult:
                 customer_id=customer.id,
                 external_id=node["id"],
                 external_name=(node.get("name") or "")[:40] or None,
+                recovery_url=(node.get("abandonedCheckoutUrl") or "")[:500] or None,
                 status=status,
                 total_cents=_cents(node["totalPriceSet"]["shopMoney"]["amount"]),
                 started_at=_when(node["createdAt"]),

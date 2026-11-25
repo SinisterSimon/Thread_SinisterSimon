@@ -22,6 +22,8 @@ class AgentContext:
     cart_lines: list[str]
     cart_total: str
     store_facts: list[str] = field(default_factory=list)
+    # Thread appends the checkout link after the agent's first text; the agent never writes URLs.
+    checkout_url: str | None = None
 
 
 @dataclass(frozen=True)

@@ -87,6 +87,8 @@ class Checkout(Base):
     external_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)  # Shopify GID
     # Shopify's checkout name, e.g. "#1001"; empty for simulated checkouts.
     external_name: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Shopify's link that reopens this checkout; a recovery message ends with it. Empty if simulated.
+    recovery_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # Set in Phase 4 when a checkout is randomly assigned to an experiment arm.
     experiment_group: Mapped[ExperimentGroup | None] = mapped_column(
