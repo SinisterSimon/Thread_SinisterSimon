@@ -63,3 +63,39 @@ def test_compare_models_runs_one_prompt_on_six_models_on_the_same_shoppers():
             assert cost["baseline-gemini-argon"] == cost["baseline-opus"]  # same list price from Dec 1
             held = session.scalars(select(Conversation).where(Conversation.arm == "holdout")).all()
             assert held and all(c.agent_cost_micros == 0 for c in held)  # no message, no cost
+
+
+def test_model_table_shows_prices_and_never_scores_a_model_from_offline_runs():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    db.engine = engine
+    db.SessionLocal.configure(bind=engine)
+    import app.main as main
+    from app.models import ConversationScore
+
+    def model_table(page: str) -> str:
+        return page.split("<h2>Model comparison</h2>", 1)[1].split("<h2>Leaderboard</h2>", 1)[0]
+
+    with TestClient(main.app) as client:
+        client.post("/simulate", data={"days": 20})
+        table = model_table(client.post("/experiments/compare-models", follow_redirects=True).text)
+        # Cheapest first, list prices per 1M tokens (input / output).
+        names = ["Haiku", "Gemini Flash", "Sonnet", "Opus", "Gemini Argon", "Fable"]
+        where = [table.index(f"<span>{n}</span>") for n in names]
+        assert where == sorted(where)
+        for price in ("$0.10 / $0.50", "$0.75 / $3.75", "$2 / $10", "$4 / $20", "$8 / $40"):
+            assert f'<td class="fig">{price}</td>' in table
+        # Offline runs are scripted: all six stay unmeasured, with no lift, quality or lift per $1.
+        assert table.count("Not measured yet") == 6 and table.count("offline runs only") == 6
+        assert "run #" not in table and "qbar" not in table
+
+        # A run whose judge used a real model counts as that model's measurement.
+        with db.SessionLocal() as session:
+            sonnet = session.scalars(select(Experiment).where(Experiment.agent_key == "baseline-sonnet")).one()
+            for score in session.scalars(select(ConversationScore).join(Conversation).where(
+                    Conversation.experiment_id == sonnet.id)):
+                score.judge_model = "claude-sonnet-5-5"
+            session.commit()
+            sonnet_id = sonnet.id
+        table = model_table(client.get("/experiments").text)
+        assert table.count("Not measured yet") == 5
+        assert f'href="/experiments/{sonnet_id}">Sonnet</a>' in table and "qbar" in table
