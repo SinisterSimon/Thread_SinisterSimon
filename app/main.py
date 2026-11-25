@@ -3,7 +3,7 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
@@ -19,14 +19,17 @@ from app.config import APP_NAME
 from app.db import SessionLocal, get_session, init_db
 from app.experiments import create_experiment, run_experiment, summarize
 from app.llm import get_llm, mode_for
+from app.llm.pricing import PRICES_PER_MTOK
 from app.metrics import latest_store, store_metrics
-from app.models import Checkout, CheckoutItem, CheckoutStatus, Conversation, Experiment
+from app.models import Checkout, CheckoutItem, CheckoutStatus, Conversation, ConversationScore, Experiment
 from app.shopify import ShopifyError, client_from_env, sync_store
 from app.shoppers import PERSONAS
 from app.simulator import SimConfig, run_simulation
 
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.filters["money"] = lambda cents: f"{'−' if cents < 0 else ''}${abs(cents) / 100:,.0f}"
+# List price per 1M tokens: "$0.10", "$0.75", "$2", "$40".
+templates.env.filters["per_mtok"] = lambda usd: f"${usd:,.0f}" if usd == int(usd) else f"${usd:,.2f}"
 templates.env.globals.update(
     app_name=APP_NAME,
     agents=AGENTS,
@@ -203,6 +206,55 @@ def _range_scale(rows) -> tuple[float, float]:
     return lo - pad, hi + pad
 
 
+def _ran_on_real_models(session: Session, exp: Experiment) -> bool:
+    """Whether a run used real models. Offline runs leave "offline:" judge models on their scores."""
+    judge = session.scalar(
+        select(ConversationScore.judge_model)
+        .join(Conversation, Conversation.id == ConversationScore.conversation_id)
+        .where(Conversation.experiment_id == exp.id)
+        .limit(1)
+    )
+    return judge is not None and not judge.startswith("offline:")
+
+
+@dataclass
+class ModelRow:
+    key: str
+    name: str  # "Sonnet", "Gemini Flash"
+    price_in: float  # list price per 1M tokens (USD)
+    price_out: float
+    status: str  # "measured" | "running" | "offline" (only scripted runs exist) | "none"
+    experiment: Experiment | None = None
+    summary: object = None
+
+
+def _model_rows(session: Session, rows) -> list[ModelRow]:
+    """One row per model in the comparison, cheapest first.
+
+    A model counts as measured only from its latest finished run on real models,
+    without guardrails and with a holdout. Offline runs answer from one script
+    whatever the model, so their numbers belong to no model and are never shown here.
+    """
+    out = []
+    for key in MODEL_COMPARISON:
+        label, model = AGENTS[key][0], AGENTS[key][1]
+        price_in, price_out = PRICES_PER_MTOK[model]
+        runs = sorted(
+            ((e, s) for e, s in rows if e.agent_key == key and not e.guardrails and e.holdout_pct),
+            key=lambda r: r[0].id, reverse=True,
+        )
+        real = next(((e, s) for e, s in runs if e.status.value == "done" and _ran_on_real_models(session, e)), None)
+        if real:
+            status = "measured"
+        elif any(e.status.value in ("queued", "running") for e, _ in runs):
+            status = "running"
+        else:
+            status = "offline" if any(e.status.value == "done" for e, _ in runs) else "none"
+        out.append(ModelRow(key, label.split(" · ", 1)[-1], price_in, price_out, status, *(real or (None, None))))
+    order = list(MODEL_COMPARISON)
+    return sorted(out, key=lambda r: (r.price_in, r.price_out, order.index(r.key)))
+
+
 @app.get("/experiments", response_class=HTMLResponse)
 def experiments_page(request: Request, session: Session = Depends(get_session)):
     store = latest_store(session)
@@ -216,6 +268,7 @@ def experiments_page(request: Request, session: Session = Depends(get_session)):
         reverse=True,
     )
     reachable = store_metrics(session, store).reachable_abandoned if store else 0
+    models = _model_rows(session, rows)
     return templates.TemplateResponse(
         request,
         "experiments.html",
@@ -223,6 +276,8 @@ def experiments_page(request: Request, session: Session = Depends(get_session)):
             "store": store,
             "rows": rows,
             "scale": _range_scale(rows),
+            "models": models,
+            "model_scale": _range_scale([(r.experiment, r.summary) for r in models if r.summary]),
             "worker": WORKER_ENABLED,
             "reachable": reachable,
             "building": is_building(),
