@@ -169,6 +169,9 @@ class Experiment(Base):
         Enum(ExperimentStatus), default=ExperimentStatus.queued, index=True
     )
     error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Conversations dropped after a provider kept failing (busy, rate limit). The run
+    # still finishes if only a few were dropped; see MAX_SKIP_SHARE in the runner.
+    skipped: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

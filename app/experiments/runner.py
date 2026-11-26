@@ -318,6 +318,15 @@ def _converse_inner(session: Session, exp: Experiment, checkout: Checkout, llm: 
     )
 
 
+# A run survives a few provider failures, but not many: dropped conversations are not
+# random (long or tricky ones fail more), so too many would bias the lift estimate.
+MAX_SKIP_SHARE = 0.05
+
+
+def _too_many_skipped(skipped: int, attempted: int) -> bool:
+    return skipped > max(1, int(attempted * MAX_SKIP_SHARE))
+
+
 def run_experiment(session: Session, exp: Experiment, llm: LLM) -> Experiment:
     exp.status = ExperimentStatus.running
     exp.started_at = datetime.now()
@@ -325,11 +334,25 @@ def run_experiment(session: Session, exp: Experiment, llm: LLM) -> Experiment:
     try:
         store = session.get(Store, exp.store_id)
         if exp.shadow:
-            for checkout in _shadow_sample(session, exp):
-                _draft(session, exp, checkout, llm, store)
+            checkouts, step = _shadow_sample(session, exp), _draft
         else:
-            for checkout in _sample(session, exp):
-                _converse(session, exp, checkout, llm, store)
+            checkouts, step = _sample(session, exp), _converse
+        skipped, attempted, last_error = 0, 0, ""
+        for checkout in checkouts:
+            messaged = exp.shadow or not in_holdout(checkout.id, exp.holdout_pct)
+            attempted += messaged
+            try:
+                step(session, exp, checkout, llm, store)
+            except LLMError as err:
+                # The provider already retried. Drop this one conversation, keep the run.
+                # Nothing was added to the session yet: rows are only added at the end of a step.
+                skipped += 1
+                last_error = str(err)
+                if _too_many_skipped(skipped, attempted):
+                    raise LLMError(f"Stopped after {skipped} failed conversations. Last error: {last_error}") from err
+        exp.skipped = skipped
+        if skipped:
+            exp.error = f"Skipped {skipped} conversation(s) after provider errors. Last: {last_error}"[:500]
         exp.status = ExperimentStatus.done
         tracing.flush()
     except Exception as err:  # keep the failure visible on the page
