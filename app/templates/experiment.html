@@ -15,7 +15,8 @@
   <div class="banner" style="margin-top:1.5rem"><span class="pulse"></span><strong>Still running.</strong>
     <a class="muted" href="/experiments/{{ e.id }}">Refresh</a> in a few seconds.</div>
 {% endif %}
-{% if e.error %}<div class="banner error" style="margin-top:1.5rem"><strong>Failed.</strong> <span class="muted">{{ e.error }}</span></div>{% endif %}
+{% if e.error and e.status.value == "done" %}<div class="banner" style="margin-top:1.5rem"><strong>Finished with gaps.</strong> <span class="muted">{{ e.error }}</span></div>
+{% elif e.error %}<div class="banner error" style="margin-top:1.5rem"><strong>Failed.</strong> <span class="muted">{{ e.error }}</span></div>{% endif %}
 
 {% if e.status.value == "done" %}
 <div class="section-head"><h2>Did the messages work?</h2></div>

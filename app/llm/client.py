@@ -97,7 +97,7 @@ class AnthropicLLM:
     def __init__(self, api_key: str):
         import anthropic  # imported lazily so offline mode needs no SDK
 
-        self._client = anthropic.Anthropic(api_key=api_key)
+        self._client = anthropic.Anthropic(api_key=api_key, max_retries=4)
         self._mode = dict.fromkeys(self.ADAPTIVE_ONLY, "adaptive")
 
     def _thinking(self, model: str) -> dict:
@@ -167,7 +167,7 @@ class GeminiLLM:
 
     MAX_TOKENS = 4096  # room for short thinking plus a one- or two-sentence reply
     # Busy (503) and per-minute limits (429) usually clear within seconds: wait, then try again.
-    RETRY_DELAYS = (2, 5)
+    RETRY_DELAYS = (2, 5, 15, 30)  # a busy provider usually recovers within a minute
     BLOCKED = {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION"}
 
     def __init__(self, api_key: str):
@@ -261,7 +261,7 @@ class OpenAILLM:
     """
 
     MAX_TOKENS = 4096
-    RETRY_DELAYS = (2, 5)
+    RETRY_DELAYS = (2, 5, 15, 30)  # a busy provider usually recovers within a minute
 
     def __init__(self, api_key: str):
         from openai import OpenAI  # imported lazily so offline mode needs no SDK
