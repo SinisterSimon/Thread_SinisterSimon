@@ -43,7 +43,7 @@ def test_compare_models_runs_one_prompt_on_every_model_on_the_same_shoppers():
     with TestClient(main.app) as client:
         client.post("/simulate", data={"days": 20})
         page = client.post("/experiments/compare-models", follow_redirects=True).text
-        assert "Compare 10 models" in page and "Lift / $1" in page and "Price /1M in·out" in page
+        assert "Compare 10 models" in page and "Extra sales" in page and "Price per 1M tokens (in / out)" in page
 
         with db.SessionLocal() as session:
             exps = session.scalars(select(Experiment).order_by(Experiment.id)).all()
@@ -109,7 +109,7 @@ def test_model_table_shows_prices_and_never_scores_a_model_from_offline_runs():
         table = model_table(client.get("/experiments").text)
         assert table.count("Not measured yet") == 10
         assert f'href="/experiments/{sonnet_id}" style="text-decoration:none">run #{sonnet_id}</a>' in table
-        assert "same true lift" in table and "Policy breaks" in table
+        assert "same extra sales" in table and "Rule breaks" in table
 
 
 def test_attribution_lens_shows_real_claimed_and_true_lift_for_the_three_agents():
