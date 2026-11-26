@@ -24,6 +24,7 @@
   <form method="post" action="/shopify/sync" style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;margin:0">
     <button type="submit">Sync from Shopify</button>
     <span class="num note">{{ domain }}{% if store %} · {{ store.name }} · {{ store.currency }}{% endif %}</span>
+    <a class="btn btn-outline" href="https://{{ domain }}" target="_blank" rel="noopener">View shop ↗</a>
   </form>
 
   {% if not store %}
