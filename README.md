@@ -90,6 +90,8 @@ Optional per experiment (`app/agents/guardrails.py`). They run outside the model
 
 ## Design decisions
 
+The full reasoning, rejected alternatives and likely interview questions are in [docs/decisions.md](docs/decisions.md).
+
 - **A simulator with ground truth.** Real stores never know who would have bought anyway. Recording it lets the lab test the *measurement method*, not just the agents.
 - **Common random numbers.** Every agent gets the same random draws per checkout, so two agents that behave the same score the same and every difference is due to behaviour.
 - **Outcomes live in `conversations`, not `orders`.** Running several agents over the same checkouts never double-counts store revenue.
