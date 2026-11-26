@@ -11,6 +11,14 @@ Simulated shoppers with real objections talk to pluggable AI agents. Every conve
 
 ![Landing page](docs/screenshots/landing.png)
 
+## Why I built this
+
+AI cart-recovery tools text shoppers who left a checkout and report every later sale as
+"recovered". Some of those shoppers would have bought anyway, so the reported number is too
+high, and nobody can see by how much. I wanted to know three things: how wrong the usual number
+is, whether a holdout group can measure the real effect, and whether a better model actually
+sells more. Thread is the lab I built to answer them, then connected to a real Shopify store.
+
 ## Findings
 
 Five simulated 180-day stores, 50% holdout, offline mode ([full report](docs/findings.md)):
@@ -161,6 +169,25 @@ Migrations run automatically on startup.
 - `conversations` + `conversation_messages`: each chat, its arm (`treatment` / `holdout`), outcome and what the shopper would have paid with no message
 - `conversation_scores`: rule results, judge ratings and quality score
 - Fields prefixed `sim_` are ground truth a real store would never see
+
+## Limitations
+
+- **The shoppers are simulated.** They react to simple rules (was the concern addressed, was the
+  decision right), so the lab tests the measurement method and agent behaviour, not how real
+  people respond. That is also why lift tied across capable models.
+- **One judge family.** Claude Sonnet judged every model, including Claude models. Rotating judges
+  across providers would make the quality scores fairer.
+- **Gemini isn't measured yet.** Google's free tier returned "busy" for nearly every call; it
+  needs a paid key.
+- **No live sending yet.** Sending works end to end with an allowlist, but no real customer has
+  been messaged. That needs consent checks, quiet hours and two-way replies first.
+
+## How I built it
+
+Built over a few weeks with AI coding assistants (Claude) doing most of the typing. The problem,
+the measurement method, the decisions and every trade-off are mine, and each one is written up in
+[docs/decisions.md](docs/decisions.md) with what was rejected and why. Every change went through a
+pull request with tests (`pytest`, offline and free) and lint (`ruff`) in CI.
 
 ## Roadmap
 
