@@ -36,20 +36,20 @@
             {% for key, a in agents.items() %}<option value="{{ key }}">{{ a[0] }}</option>{% endfor %}
           </select></label>
         <label class="field">Shoppers<input type="number" name="sample_size" value="{{ reachable or 150 }}" min="1" max="5000"></label>
-        <label class="field">Holdout %<input type="number" name="holdout_pct" value="50" min="0" max="90"></label>
+        <label class="field">No-message group %<input type="number" name="holdout_pct" value="50" min="0" max="90"></label>
       </div>
       <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:1rem;margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid var(--border)">
         <label class="toggle"><input type="checkbox" name="guardrails" value="true" aria-label="Guardrails"><span class="track"></span>Guardrails</label>
         <button type="submit"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg>Start run</button>
       </div>
-      <p class="note" style="margin:0.75rem 0 0">Holdout shoppers receive no message.{{ " Queued for the worker." if worker }}</p>
+      <p class="note" style="margin:0.75rem 0 0">Shoppers in the no-message group get nothing, so we can see what the messages actually changed.{{ " Queued for the worker." if worker }}</p>
     </form>
     <div style="display:grid;gap:1rem">
       <form method="post" action="/experiments/run-all" class="card-ink">
         <input type="hidden" name="holdout_pct" value="50">
         <div>
           <p class="eyebrow">Quick compare</p>
-          <p style="margin:0.75rem 0 0;font-size:0.875rem;line-height:1.6;opacity:.8">3 agents. Same shoppers. 50% holdout.</p>
+          <p style="margin:0.75rem 0 0;font-size:0.875rem;line-height:1.6;opacity:.8">3 sales styles, same shoppers, half get no message.</p>
         </div>
         <button type="submit" class="btn-on-ink" style="margin-top:1.5rem;justify-content:center">Run all three →</button>
       </form>
@@ -67,33 +67,33 @@
   <section class="model-comparison show-guarded" id="model-comparison" aria-label="Model comparison">
     <h2>Better conversations. Measured impact.</h2>
     <p class="muted" style="margin:0.75rem 0 0;max-width:48rem;font-size:0.875rem;line-height:1.6">
-      <span class="t-primary" style="font-weight:500">Haiku</span> agents against simulated shoppers. A randomized holdout separates sales after a message from sales caused by it.</p>
+      Three sales styles on <span class="t-primary" style="font-weight:500">Claude Haiku</span>, tested on simulated shoppers. Half the shoppers get no message, which shows which sales the messages actually caused.</p>
     <div class="model-bar">
-      <span class="num note" style="font-size:11px">ESTIMATED LIFT · 95% RANGE</span>
+      <span class="note" style="font-size:12px">Extra sales caused by the messages · bar = likely range</span>
       <label class="toggle" style="font-size:0.75rem">
         <svg class="t-success" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
-        Guarded runs
+        With guardrails
         <input type="checkbox" id="show-guarded" checked aria-label="Show guarded runs"><span class="track"></span>
       </label>
     </div>
 
     <div style="margin-top:1.25rem">
       <div class="model-table model-head" aria-hidden="true">
-        <span class="mt-name">Model</span><span class="mt-price">Price /1M in·out</span><span class="mt-plot">Lift · 95%</span>
-        <span class="mt-lift">Lift</span><span class="mt-quality">Quality</span><span class="mt-dollar">Lift / $1</span>
+        <span class="mt-name">Agent</span><span class="mt-price"></span><span class="mt-plot">Extra sales</span>
+        <span class="mt-lift">Estimate</span><span class="mt-quality">Quality</span><span class="mt-dollar"></span>
       </div>
 
       {% set sa = cmp.strategy_axis %}{% set ma = cmp.model_axis %}
-      <div class="model-group"><span>Strategies · same batch</span>
-        {% if cmp.strategy_size %}<span class="num">{{ cmp.strategy_size[0] }} messaged / {{ cmp.strategy_size[1] }} held out per run</span>{% endif %}</div>
+      <div class="model-group"><span>Sales styles · same shoppers</span>
+        {% if cmp.strategy_size %}<span class="num">{{ cmp.strategy_size[0] }} messaged / {{ cmp.strategy_size[1] }} got no message</span>{% endif %}</div>
       {% set b = cmp.baseline %}{% set bs = b.summary %}
       <div class="model-table{{ ' model-row-unmeasured' if not (bs and bs.estimate) }}">
         <div class="mt-name"><h3>Baseline · <span class="t-primary">Haiku</span></h3>
           <p class="mt-sub num">{% if b.experiment %}<a href="/experiments/{{ b.experiment.id }}" style="text-decoration:none">{{ run_label(b) }}</a>{% else %}Not measured yet{% endif %}</p></div>
-        <p class="mt-price num">{{ b.price_in|per_mtok }} / {{ b.price_out|per_mtok }}</p>
+        <p class="mt-price"></p>
         <div class="mt-plot model-plot"><span class="model-zero" style="left:{{ pos(0, sa) }}%"></span>
           {% if bs and bs.estimate %}{{ estimate(bs.estimate, sa) }}{% else %}<span class="model-empty"></span>{% endif %}</div>
-        <p class="mt-lift num{{ ' t-success' if bs and bs.estimate }}" data-label="Lift" style="font-weight:500">{{ bs.estimate.total_lift|money if bs and bs.estimate else dash() }}</p>
+        <p class="mt-lift num{{ ' t-success' if bs and bs.estimate }}" data-label="Estimate" style="font-weight:500">{{ bs.estimate.total_lift|money if bs and bs.estimate else dash() }}</p>
         <p class="mt-quality num" data-label="Quality">{{ bs.avg_quality if bs and bs.avg_quality is not none else dash() }}</p>
         <p class="mt-dollar num" data-label="Lift / $1">{% if b.lift_per_dollar is not none %}${{ "{:,.0f}".format(b.lift_per_dollar) }}{% else %}{{ dash() }}{% endif %}</p>
       </div>
@@ -107,11 +107,11 @@
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
             <a href="/experiments/{{ g.experiment.id }}" style="text-decoration:none">Guarded · {{ run_label(g)|lower }}</a></p>{% endif %}
         </div>
-        <p class="mt-price num">{{ p.price_in|per_mtok }} / {{ p.price_out|per_mtok }}</p>
+        <p class="mt-price"></p>
         <div class="mt-plot model-plot"><span class="model-zero" style="left:{{ pos(0, sa) }}%"></span>
           {% if ps and ps.estimate %}{{ estimate(ps.estimate, sa) }}{% elif not (gs and gs.estimate) %}<span class="model-empty"></span>{% endif %}
           {% if gs and gs.estimate %}{{ estimate(gs.estimate, sa, guarded=true) }}{% endif %}</div>
-        <div class="mt-lift num" data-label="Lift"><p>{{ ps.estimate.total_lift|money if ps and ps.estimate else dash() }}</p>
+        <div class="mt-lift num" data-label="Estimate"><p>{{ ps.estimate.total_lift|money if ps and ps.estimate else dash() }}</p>
           {% if gs %}<p class="guarded-only t-primary" style="margin-top:0.75rem">{{ gs.estimate.total_lift|money if gs.estimate else dash() }}</p>{% endif %}</div>
         <div class="mt-quality num" data-label="Quality"><p>{{ ps.avg_quality if ps and ps.avg_quality is not none else dash() }}</p>
           {% if gs %}<p class="guarded-only t-primary" style="margin-top:0.75rem">{{ gs.avg_quality if gs.avg_quality is not none else dash() }}</p>{% endif %}</div>
@@ -126,19 +126,19 @@
        react to the agent's decisions (discount, handoff), not its wording. So models are compared
        on what does differ: quality, policy breaks and cost. #}
     {% set measured = cmp.models|selectattr("summary")|list %}
-    <div class="model-group" style="margin-top:2.5rem"><span>Models · same prompt, same shoppers</span><span>real-model runs only</span></div>
+    <div class="model-group" style="margin-top:2.5rem"><span>AI models · same instructions, same shoppers</span><span>real runs only</span></div>
     {% if measured %}
       {% set lifts = measured|map(attribute="summary.caused_revenue_cents")|list %}
       {% set best_q = measured|map(attribute="summary.avg_quality")|select("number")|max %}
       {% set least_breaks = measured|map(attribute="summary.policy_violations")|min %}
-      <p class="note" style="margin:0.75rem 0 0;max-width:48rem">Every measured model reached about the same true lift
-        (<span class="num">{{ lifts|min|money }}–{{ lifts|max|money }}</span>): a simulated shopper buys when the agent addresses
-        their concern and makes the right call (discount, handoff), a bar every capable model clears in the same conversations.
-        So models differ on quality, policy breaks and cost.</p>
+      <p class="note" style="margin:0.75rem 0 0;max-width:48rem">Every model caused about the same extra sales
+        (<span class="num">{{ lifts|min|money }}–{{ lifts|max|money }}</span>), because the simulated shoppers react to the right
+        decision (discount or not, hand off to a human or not), and every capable model makes it. So this table compares what
+        does differ: message quality, rule breaks and cost.</p>
     {% endif %}
     <div class="table-wrap">
     <table style="min-width:640px">
-      <thead><tr style="white-space:nowrap"><th>Model</th><th>Price /1M in·out</th><th>Quality</th><th>Policy breaks</th><th>Cost / message</th></tr></thead>
+      <thead><tr style="white-space:nowrap"><th>Model</th><th>Price per 1M tokens (in / out)</th><th>Quality</th><th>Rule breaks</th><th>Cost per message</th></tr></thead>
       <tbody>
       {% for m in cmp.models %}{% set ms = m.summary %}
       <tr>
@@ -160,9 +160,8 @@
     </div>
 
     <div class="model-foot">
-      <p class="num">{{ cmp.runs }} run{{ "" if cmp.runs == 1 else "s" }} · list prices per 1M tokens</p>
-      <p>Quality: 0–100 (rules + AI judge) · Policy breaks out of ~50 messaged shoppers · Cost: the agent's model calls</p>
-      {% if gs %}<p class="guarded-only"><span class="ring"></span>Guarded · <span class="num">{{ gs.policy_violations }}</span> policy breaks</p>{% endif %}
+      <p>Quality: score out of 100 from rule checks and an AI judge · Rule breaks: out of ~50 messaged shoppers</p>
+      {% if gs %}<p class="guarded-only"><span class="ring"></span>With guardrails · <span class="num">{{ gs.policy_violations }}</span> rule breaks</p>{% endif %}
     </div>
     <script>
       (function () {
@@ -174,7 +173,7 @@
 
   <div class="section-head">
     <h2>Leaderboard</h2>
-    {% if rows %}<div class="legend"><span><i class="sw-band"></i>95% range</span><span><i class="sw-true"></i>true lift</span><span><i class="sw-claim"></i>claimed</span></div>{% endif %}
+    {% if rows %}<div class="legend"><span><i class="sw-band"></i>likely range</span><span><i class="sw-true"></i>actual</span><span><i class="sw-claim"></i>sales after a message</span></div>{% endif %}
   </div>
   {% if rows and rows|selectattr("0.status.value", "in", ["queued", "running"])|list %}
   <p class="note" style="margin-top:0.75rem">Some runs are still going. This page refreshes itself.</p>
@@ -182,8 +181,8 @@
   {% if not rows %}<p class="note" style="margin-top:1rem">No experiments yet.</p>{% else %}
   <div class="table-wrap">
   <table style="min-width:860px">
-    <thead><tr style="white-space:nowrap"><th>#</th><th>Agent</th><th>Msg / hold</th><th>Estimated lift (95%)</th><th>True</th><th>Claimed</th>
-        <th>Overclaim</th><th>Quality</th><th>Breaks</th></tr></thead>
+    <thead><tr style="white-space:nowrap"><th>#</th><th>Agent</th><th>Messaged / not</th><th>Extra sales (estimate)</th><th>Actual extra</th><th>Sales after a message</th>
+        <th>Overcounted</th><th>Quality</th><th>Rule breaks</th></tr></thead>
     <tbody>
     {% for e, s in rows %}
     {% set est = s.estimate %}
@@ -202,15 +201,15 @@
           <span class="num" style="font-weight:600">{{ est.total_lift|money }}</span>
           <span class="num note">{{ est.ci_low|money }} – {{ est.ci_high|money }}</span>
         </div>
-        <div class="range" title="95% range {{ est.ci_low|money }} to {{ est.ci_high|money }}; true lift {{ s.caused_revenue_cents|money }}; claimed {{ s.claimed_revenue_cents|money }}">
+        <div class="range" title="Likely range {{ est.ci_low|money }} to {{ est.ci_high|money }}; true lift {{ s.caused_revenue_cents|money }}; claimed {{ s.claimed_revenue_cents|money }}">
           <div class="axis"></div>
           <div class="zero" style="left:{{ pct(0) }}%"></div>
           <div class="band" style="left:{{ pct(est.ci_low) }}%;width:{{ "%.2f"|format(pct(est.ci_high)|float - pct(est.ci_low)|float) }}%"></div>
           <div class="truth" style="left:{{ pct(s.caused_revenue_cents) }}%"></div>
           <div class="claim" style="left:{{ pct(s.claimed_revenue_cents) }}%"></div>
         </div>
-        {% if not est.significant %}<p class="note t-warn" style="margin:0.375rem 0 0">Includes $0</p>{% endif %}
-        {% else %}<span class="note">no holdout</span>{% endif %}
+        {% if not est.significant %}<p class="note t-warn" style="margin:0.375rem 0 0">Could be $0</p>{% endif %}
+        {% else %}<span class="note">no comparison group</span>{% endif %}
       </td>
       <td class="num t-success">{{ s.caused_revenue_cents|money }}</td>
       <td class="num muted">{{ s.claimed_revenue_cents|money }}</td>
@@ -222,7 +221,7 @@
     </tbody>
   </table>
   </div>
-  <p class="note" style="margin-top:1rem;max-width:48rem">Ranked by estimated lift. <span class="num">Quality: 0–100.</span> Breaks: policy violations.</p>
+  <p class="note" style="margin-top:1rem;max-width:48rem">Extra sales = sales the messages caused, estimated by comparing with shoppers who got no message. "Sales after a message" counts every sale, including people who would have bought anyway; "Overcounted" shows how much bigger that number is.</p>
   {% endif %}
 {% endif %}
 </div>

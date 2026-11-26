@@ -8,8 +8,8 @@
 {% macro X(v) %}{{ x0 + (v - lo) / (hi - lo) * w }}{% endmacro %}
 {# Same colours as the leaderboard: claimed grey, estimate vermilion, truth green. #}
 {% set rows = [("Claimed (every sale after a message)", s.claimed_revenue_cents, "var(--muted-fg)", none),
-               ("Estimated from holdout", est.total_lift if est else none, "var(--primary)", est),
-               ("True lift (simulator truth)", s.caused_revenue_cents, "var(--success)", none)] %}
+               ("Estimated (vs. no-message group)", est.total_lift if est else none, "var(--primary)", est),
+               ("Actual extra sales (simulator truth)", s.caused_revenue_cents, "var(--success)", none)] %}
 <svg viewBox="0 0 760 {{ 40 + rows|length * 52 }}" role="img" aria-label="Claimed revenue compared with estimated and true lift" style="width:100%;max-width:760px;font:13px var(--sans)">
   <line x1="{{ X(0) }}" x2="{{ X(0) }}" y1="12" y2="{{ 20 + rows|length * 52 }}" style="stroke:var(--muted-fg)" stroke-width="1"/>
   <text x="{{ X(0) }}" y="{{ 34 + rows|length * 52 }}" text-anchor="middle" style="fill:var(--muted-fg)" font-size="11">$0</text>
@@ -17,10 +17,10 @@
     {% set y = 20 + loop.index0 * 52 %}
     <text x="0" y="{{ y + 12 }}" style="fill:var(--foreground)">{{ label }}</text>
     {% if v is none %}
-      <text x="0" y="{{ y + 30 }}" style="fill:var(--muted-fg)" font-size="12">No holdout group in this run</text>
+      <text x="0" y="{{ y + 30 }}" style="fill:var(--muted-fg)" font-size="12">No no-message group in this run</text>
     {% else %}
       {% set a = [X(0)|float, X(v)|float]|min %}{% set b = [X(0)|float, X(v)|float]|max %}
-      <g><title>{{ label }}: {{ usd(v) }}{% if ci %} (95% range {{ usd(ci.ci_low) }} to {{ usd(ci.ci_high) }}){% endif %}</title>
+      <g><title>{{ label }}: {{ usd(v) }}{% if ci %} (likely range {{ usd(ci.ci_low) }} to {{ usd(ci.ci_high) }}){% endif %}</title>
         <rect x="{{ a }}" y="{{ y + 6 }}" width="{{ [b - a, 1]|max }}" height="18" rx="4" style="fill:{{ color }};opacity:.85"/>
         {% if ci %}
           <line x1="{{ X(ci.ci_low) }}" x2="{{ X(ci.ci_high) }}" y1="{{ y + 15 }}" y2="{{ y + 15 }}" style="stroke:var(--foreground)" stroke-width="2"/>
@@ -28,7 +28,7 @@
           <line x1="{{ X(ci.ci_high) }}" x2="{{ X(ci.ci_high) }}" y1="{{ y + 8 }}" y2="{{ y + 22 }}" style="stroke:var(--foreground)" stroke-width="2"/>
         {% endif %}
       </g>
-      <text x="0" y="{{ y + 30 }}" style="fill:var(--muted-fg)" font-size="12"><tspan font-weight="600" style="fill:var(--foreground);font-family:var(--mono)">{{ usd(v) }}</tspan>{% if ci %}  (95%: {{ usd(ci.ci_low) }} to {{ usd(ci.ci_high) }}){% endif %}</text>
+      <text x="0" y="{{ y + 30 }}" style="fill:var(--muted-fg)" font-size="12"><tspan font-weight="600" style="fill:var(--foreground);font-family:var(--mono)">{{ usd(v) }}</tspan>{% if ci %}  (likely: {{ usd(ci.ci_low) }} to {{ usd(ci.ci_high) }}){% endif %}</text>
     {% endif %}
   {% endfor %}
 </svg>
